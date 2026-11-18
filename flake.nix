@@ -50,6 +50,16 @@
             fileset = lib.fileset.fileFilter (file: file.hasExt "nix") ./.;
           };
 
+          # deny.toml is not a Cargo source, so cargo-deny gets its own source set; editing
+          # the policy then doesn't rebuild the other checks.
+          denySrc = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (craneLib.fileset.commonCargoSources ./.)
+              ./deny.toml
+            ];
+          };
+
           commonArgs = {
             inherit src;
             inherit (workspace) version;
@@ -75,6 +85,14 @@
                 cargoNextestExtraArgs = "--no-tests=pass";
               }
             );
+
+            # Licences, bans and sources only: the advisory database needs network access,
+            # which the Nix sandbox does not allow; advisories run as a CI job instead.
+            deny = craneLib.cargoDeny {
+              inherit (commonArgs) pname version;
+              src = denySrc;
+            };
+
             nixfmt = pkgs.runCommand "${name}-nixfmt" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
               find ${nixSrc} -name '*.nix' -exec nixfmt --check {} +
               touch $out

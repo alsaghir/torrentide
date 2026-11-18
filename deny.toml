@@ -1,0 +1,48 @@
+# cargo-deny policy: licences, security advisories, banned crates and sources.
+# Run with `cargo deny check`. Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+# Only the platforms we ship (flake.nix `systems`), so crates for other targets are ignored.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+# Vulnerabilities always fail. Unsound crates fail anywhere in the tree (default: direct
+# dependencies only). Unmaintained crates fail only when we depend on them directly:
+# for transitive ones we have no fix until the upstream crate moves on.
+# Silence a specific advisory only via `ignore = [{ id = "...", reason = "..." }]`.
+unsound = "all"
+unmaintained = "workspace"
+yanked = "deny"
+
+[licenses]
+# Every licence here must be compatible with distributing Torrentide under MPL-2.0.
+# For `A OR B` expressions only one alternative needs to be allowed.
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# The list is policy, not inventory: most entries match no dependency yet.
+unused-allowed-license = "allow"
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies have no version requirement; that is not a wildcard risk.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
