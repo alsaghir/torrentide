@@ -77,12 +77,11 @@
                 cargoClippyExtraArgs = "--all-targets -- --deny warnings";
               }
             );
-            # `pass` while the workspace has no tests yet; nextest fails on an empty run by default.
+
             nextest = craneLib.cargoNextest (
               commonArgs
               // {
                 inherit cargoArtifacts;
-                cargoNextestExtraArgs = "--no-tests=pass";
               }
             );
 

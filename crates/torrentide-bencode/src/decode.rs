@@ -1,0 +1,333 @@
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
+
+use crate::Value;
+
+/// Decodes exactly one bencode value, which must span the whole input.
+///
+/// # Errors
+///
+/// Returns a [`DecodeError`] when the input is not canonical bencode or has bytes after the value.
+pub fn decode(input: &[u8]) -> Result<Value<'_>, DecodeError> {
+    let mut decoder = Decoder { input, pos: 0 };
+    let value = decoder.value()?;
+    if decoder.pos == input.len() {
+        Ok(value)
+    } else {
+        Err(decoder.error(ErrorKind::TrailingData))
+    }
+}
+
+struct Decoder<'src> {
+    input: &'src [u8],
+    pos: usize,
+}
+
+impl<'src> Decoder<'src> {
+    fn value(&mut self) -> Result<Value<'src>, DecodeError> {
+        match self.peek()? {
+            b'i' => self.int().map(Value::Int),
+            b'0'..=b'9' => self.bytes().map(Value::Bytes),
+            other => Err(self.error(ErrorKind::UnexpectedByte(other))),
+        }
+    }
+
+    /// `<length>:<bytes>`; the length is canonical like an integer.
+    fn bytes(&mut self) -> Result<&'src [u8], DecodeError> {
+        let length = self.digits(self.pos)?;
+        self.expect(b':')?;
+        let start = self.pos;
+        let end = usize::try_from(length)
+            .ok()
+            .and_then(|length| start.checked_add(length));
+        let data = end
+            .and_then(|end| self.input.get(start..end))
+            .ok_or(DecodeError {
+                kind: ErrorKind::UnexpectedEnd,
+                offset: self.input.len(),
+            })?;
+        self.pos += data.len();
+        Ok(data)
+    }
+
+    /// `i<number>e`; BEP 3 forbids leading zeros and `-0`.
+    fn int(&mut self) -> Result<i64, DecodeError> {
+        self.expect(b'i')?;
+        let number_start = self.pos;
+        let negative = self.input.get(self.pos) == Some(&b'-');
+        if negative {
+            self.pos += 1;
+        }
+
+        let decoded_magnitude = self.digits(number_start)?;
+
+        if negative && decoded_magnitude == 0 {
+            return Err(DecodeError {
+                kind: ErrorKind::NonCanonicalNumber,
+                offset: number_start,
+            });
+        }
+        let value = if negative {
+            0_i64.checked_sub_unsigned(decoded_magnitude)
+        } else {
+            0_i64.checked_add_unsigned(decoded_magnitude)
+        };
+        let value = value.ok_or(DecodeError {
+            kind: ErrorKind::NumberOverflow,
+            offset: number_start,
+        })?;
+        self.expect(b'e')?;
+        Ok(value)
+    }
+
+    /// Reads a non-empty run of ASCII digits without a leading zero.
+    ///
+    /// `number_start` is where the whole number begins (its sign, if any) and is only used as
+    /// the offset of errors, so they point at the number rather than into it.
+    fn digits(&mut self, number_start: usize) -> Result<u64, DecodeError> {
+        let start = self.pos;
+        let mut value: u64 = 0;
+        while let Some(&byte) = self.input.get(self.pos)
+            && byte.is_ascii_digit()
+        {
+            value = value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u64::from(byte - b'0')))
+                .ok_or(DecodeError {
+                    kind: ErrorKind::NumberOverflow,
+                    offset: number_start,
+                })?;
+            self.pos += 1;
+        }
+        match self.pos - start {
+            0 => Err(self.error(ErrorKind::MissingDigits)),
+            1 => Ok(value),
+            _ if self.input[start] == b'0' => Err(DecodeError {
+                kind: ErrorKind::NonCanonicalNumber,
+                offset: number_start,
+            }),
+            _ => Ok(value),
+        }
+    }
+
+    fn peek(&self) -> Result<u8, DecodeError> {
+        self.input
+            .get(self.pos)
+            .copied()
+            .ok_or(self.error(ErrorKind::UnexpectedEnd))
+    }
+
+    fn expect(&mut self, wanted: u8) -> Result<(), DecodeError> {
+        let byte = self.peek()?;
+        if byte == wanted {
+            self.pos += 1;
+            Ok(())
+        } else {
+            Err(self.error(ErrorKind::UnexpectedByte(byte)))
+        }
+    }
+
+    fn error(&self, kind: ErrorKind) -> DecodeError {
+        DecodeError {
+            kind,
+            offset: self.pos,
+        }
+    }
+}
+
+/// Why decoding failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    /// The input ended before the value was complete.
+    UnexpectedEnd,
+    /// A byte that cannot appear at this position.
+    UnexpectedByte(u8),
+    /// A number with a leading zero, or negative zero.
+    NonCanonicalNumber,
+    /// A number without any digits.
+    MissingDigits,
+    /// A number that does not fit the target type.
+    NumberOverflow,
+    /// Bytes remain after the root value.
+    TrailingData,
+}
+
+impl Display for ErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnexpectedEnd => f.write_str("unexpected end of input"),
+            Self::UnexpectedByte(byte) => write!(f, "unexpected byte 0x{byte:02x}"),
+            Self::NonCanonicalNumber => f.write_str("number with a leading zero or negative zero"),
+            Self::MissingDigits => f.write_str("number without digits"),
+            Self::NumberOverflow => f.write_str("number out of range"),
+            Self::TrailingData => f.write_str("data after the root value"),
+        }
+    }
+}
+
+/// A decoding failure and the byte offset where it was detected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodeError {
+    kind: ErrorKind,
+    offset: usize,
+}
+
+impl DecodeError {
+    /// Returns why decoding failed.
+    #[must_use]
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    /// Returns the offset of the first byte of the offending token.
+    #[must_use]
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+}
+
+impl Display for DecodeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} at offset {}", self.kind, self.offset)
+    }
+}
+
+impl Error for DecodeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejected(input: &[u8]) -> (ErrorKind, usize) {
+        let error = decode(input).expect_err("input must be rejected");
+        (error.kind(), error.offset())
+    }
+
+    #[test]
+    fn decodes_zero() {
+        assert_eq!(decode(b"i0e"), Ok(Value::Int(0)));
+    }
+
+    #[test]
+    fn decodes_negative_integer() {
+        assert_eq!(decode(b"i-42e"), Ok(Value::Int(-42)));
+    }
+
+    #[test]
+    fn decodes_integer_extremes() {
+        assert_eq!(decode(b"i9223372036854775807e"), Ok(Value::Int(i64::MAX)));
+        assert_eq!(decode(b"i-9223372036854775808e"), Ok(Value::Int(i64::MIN)));
+    }
+
+    #[test]
+    fn rejects_negative_zero() {
+        assert_eq!(rejected(b"i-0e"), (ErrorKind::NonCanonicalNumber, 1));
+    }
+
+    #[test]
+    fn rejects_integer_leading_zero() {
+        assert_eq!(rejected(b"i03e"), (ErrorKind::NonCanonicalNumber, 1));
+        assert_eq!(rejected(b"i-03e"), (ErrorKind::NonCanonicalNumber, 1));
+    }
+
+    #[test]
+    fn rejects_integer_without_digits() {
+        assert_eq!(rejected(b"ie"), (ErrorKind::MissingDigits, 1));
+        assert_eq!(rejected(b"i-e"), (ErrorKind::MissingDigits, 2));
+    }
+
+    #[test]
+    fn rejects_fractional_integer() {
+        assert_eq!(rejected(b"i1.5e"), (ErrorKind::UnexpectedByte(b'.'), 2));
+    }
+
+    #[test]
+    fn rejects_integer_overflow() {
+        assert_eq!(
+            rejected(b"i9223372036854775808e"),
+            (ErrorKind::NumberOverflow, 1)
+        );
+        assert_eq!(
+            rejected(b"i-9223372036854775809e"),
+            (ErrorKind::NumberOverflow, 1)
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_integer() {
+        assert_eq!(rejected(b"i42"), (ErrorKind::UnexpectedEnd, 3));
+    }
+
+    #[test]
+    fn decodes_empty_byte_string() {
+        assert_eq!(decode(b"0:"), Ok(Value::Bytes(b"")));
+    }
+
+    #[test]
+    fn decodes_byte_string() {
+        assert_eq!(decode(b"4:spam"), Ok(Value::Bytes(b"spam")));
+    }
+
+    #[test]
+    fn decodes_non_utf8_byte_string() {
+        assert_eq!(decode(b"2:\xff\xfe"), Ok(Value::Bytes(b"\xff\xfe")));
+    }
+
+    #[test]
+    fn rejects_short_byte_string() {
+        assert_eq!(rejected(b"5:spam"), (ErrorKind::UnexpectedEnd, 6));
+    }
+
+    #[test]
+    fn rejects_byte_string_without_colon() {
+        assert_eq!(rejected(b"4spam"), (ErrorKind::UnexpectedByte(b's'), 1));
+    }
+
+    #[test]
+    fn rejects_length_leading_zero() {
+        assert_eq!(rejected(b"03:abc"), (ErrorKind::NonCanonicalNumber, 0));
+    }
+
+    #[test]
+    fn rejects_length_beyond_u64() {
+        assert_eq!(
+            rejected(b"99999999999999999999:x"),
+            (ErrorKind::NumberOverflow, 0)
+        );
+    }
+
+    #[test]
+    fn rejects_length_beyond_input() {
+        assert_eq!(
+            rejected(b"18446744073709551615:x"),
+            (ErrorKind::UnexpectedEnd, 22)
+        );
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        assert_eq!(rejected(b""), (ErrorKind::UnexpectedEnd, 0));
+    }
+
+    #[test]
+    fn rejects_unknown_type() {
+        assert_eq!(rejected(b"x"), (ErrorKind::UnexpectedByte(b'x'), 0));
+    }
+
+    #[test]
+    fn rejects_trailing_data() {
+        assert_eq!(rejected(b"i1ei2e"), (ErrorKind::TrailingData, 3));
+    }
+
+    #[test]
+    fn error_message_names_kind_and_offset() {
+        let error = decode(b"i-0e").expect_err("negative zero must be rejected");
+        assert_eq!(
+            error.to_string(),
+            "number with a leading zero or negative zero at offset 1"
+        );
+    }
+}
