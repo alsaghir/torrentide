@@ -1,0 +1,14 @@
+[package]
+name = "torrentide-bencode"
+description = "Bencode decoding and encoding for the Torrentide BitTorrent client"
+keywords = ["bittorrent", "bencode", "torrent"]
+categories = ["encoding", "parser-implementations"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
