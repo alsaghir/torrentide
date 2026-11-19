@@ -5,4 +5,7 @@ pub enum Value<'src> {
     Int(i64),
     /// A byte string, e.g. `4:spam`; not necessarily UTF-8.
     Bytes(&'src [u8]),
+
+    /// A list of bencode values, e.g. `l4:spam4:eggse`.
+    List(Vec<Value<'src>>),
 }

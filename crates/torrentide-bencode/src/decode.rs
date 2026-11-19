@@ -30,8 +30,19 @@ impl<'src> Decoder<'src> {
         match self.peek()? {
             b'i' => self.int().map(Value::Int),
             b'0'..=b'9' => self.bytes().map(Value::Bytes),
+            b'l' => self.list().map(Value::List),
             other => Err(self.error(ErrorKind::UnexpectedByte(other))),
         }
+    }
+
+    fn list(&mut self) -> Result<Vec<Value<'src>>, DecodeError> {
+        self.expect(b'l')?;
+        let mut items = Vec::new();
+        while self.peek()? != b'e' {
+            items.push(self.value()?);
+        }
+        self.expect(b'e')?;
+        Ok(items)
     }
 
     /// `<length>:<bytes>`; the length is canonical like an integer.
@@ -329,5 +340,56 @@ mod tests {
             error.to_string(),
             "number with a leading zero or negative zero at offset 1"
         );
+    }
+
+    #[test]
+    fn decodes_empty_list() {
+        assert_eq!(decode(b"le"), Ok(Value::List(vec![])));
+    }
+
+    #[test]
+    fn decodes_mixed_list() {
+        assert_eq!(
+            decode(b"l4:spam4:eggsi42ee"),
+            Ok(Value::List(vec![
+                Value::Bytes(b"spam"),
+                Value::Bytes(b"eggs"),
+                Value::Int(42)
+            ]))
+        );
+        assert_eq!(
+            decode(b"l4:spami42ee"),
+            Ok(Value::List(vec![Value::Bytes(b"spam"), Value::Int(42)]))
+        );
+    }
+
+    #[test]
+    fn decodes_nested_list() {
+        assert_eq!(
+            // [["cat", "dog"], 10, 20, ["bird", 30]]
+            decode(b"ll3:cat3:dogei10ei20el4:birdi30eee"),
+            Ok(Value::List(vec![
+                Value::List(vec![Value::Bytes(b"cat"), Value::Bytes(b"dog")]),
+                Value::Int(10),
+                Value::Int(20),
+                Value::List(vec![Value::Bytes(b"bird"), Value::Int(30)])
+            ]))
+        );
+        assert_eq!(
+            decode(b"lli1eee"),
+            Ok(Value::List(vec![Value::List(vec![Value::Int(1)])]))
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_list() {
+        assert_eq!(rejected(b"l4:spam4:eggs"), (ErrorKind::UnexpectedEnd, 13));
+        assert_eq!(rejected(b"l4:spam"), (ErrorKind::UnexpectedEnd, 7));
+    }
+
+    #[test]
+    fn rejects_invalid_list_element() {
+        assert_eq!(rejected(b"li-0ee"), (ErrorKind::NonCanonicalNumber, 2));
+        assert_eq!(rejected(b"lxe"), (ErrorKind::UnexpectedByte(b'x'), 1));
     }
 }
