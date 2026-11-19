@@ -5,6 +5,9 @@ use std::{
 
 use crate::Value;
 
+/// Each nested container is one recursive call, so this bounds stack use on untrusted input.
+const MAX_DEPTH: usize = 64;
+
 /// Decodes exactly one bencode value, which must span the whole input.
 ///
 /// # Errors
@@ -12,7 +15,7 @@ use crate::Value;
 /// Returns a [`DecodeError`] when the input is not canonical bencode or has bytes after the value.
 pub fn decode(input: &[u8]) -> Result<Value<'_>, DecodeError> {
     let mut decoder = Decoder { input, pos: 0 };
-    let value = decoder.value()?;
+    let value = decoder.value(0)?;
     if decoder.pos == input.len() {
         Ok(value)
     } else {
@@ -26,20 +29,25 @@ struct Decoder<'src> {
 }
 
 impl<'src> Decoder<'src> {
-    fn value(&mut self) -> Result<Value<'src>, DecodeError> {
+    /// `depth` is the number of containers enclosing this value; the root is at depth 0.
+    fn value(&mut self, depth: usize) -> Result<Value<'src>, DecodeError> {
         match self.peek()? {
             b'i' => self.int().map(Value::Int),
             b'0'..=b'9' => self.bytes().map(Value::Bytes),
-            b'l' => self.list().map(Value::List),
+            b'l' => self.list(depth).map(Value::List),
             other => Err(self.error(ErrorKind::UnexpectedByte(other))),
         }
     }
 
-    fn list(&mut self) -> Result<Vec<Value<'src>>, DecodeError> {
+    /// `l<values>e`; its elements sit one level deeper than the list itself.
+    fn list(&mut self, depth: usize) -> Result<Vec<Value<'src>>, DecodeError> {
+        if depth >= MAX_DEPTH {
+            return Err(self.error(ErrorKind::MaxDepthExceeded));
+        }
         self.expect(b'l')?;
         let mut items = Vec::new();
         while self.peek()? != b'e' {
-            items.push(self.value()?);
+            items.push(self.value(depth + 1)?);
         }
         self.expect(b'e')?;
         Ok(items)
@@ -164,6 +172,8 @@ pub enum ErrorKind {
     NumberOverflow,
     /// Bytes remain after the root value.
     TrailingData,
+    /// Values are nested deeper than the decoder allows.
+    MaxDepthExceeded,
 }
 
 impl Display for ErrorKind {
@@ -175,6 +185,7 @@ impl Display for ErrorKind {
             Self::MissingDigits => f.write_str("number without digits"),
             Self::NumberOverflow => f.write_str("number out of range"),
             Self::TrailingData => f.write_str("data after the root value"),
+            Self::MaxDepthExceeded => f.write_str("maximum nesting depth exceeded"),
         }
     }
 }
@@ -210,6 +221,8 @@ impl Error for DecodeError {}
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     fn rejected(input: &[u8]) -> (ErrorKind, usize) {
@@ -391,5 +404,30 @@ mod tests {
     fn rejects_invalid_list_element() {
         assert_eq!(rejected(b"li-0ee"), (ErrorKind::NonCanonicalNumber, 2));
         assert_eq!(rejected(b"lxe"), (ErrorKind::UnexpectedByte(b'x'), 1));
+    }
+
+    fn nested_lists(depth: usize) -> Vec<u8> {
+        [b"l".repeat(depth), b"e".repeat(depth)].concat()
+    }
+
+    #[test]
+    fn decodes_nesting_at_limit() {
+        assert_matches!(decode(&nested_lists(MAX_DEPTH)), Ok(Value::List(_)));
+    }
+
+    #[test]
+    fn rejects_nesting_beyond_limit() {
+        assert_eq!(
+            rejected(&nested_lists(MAX_DEPTH + 1)),
+            (ErrorKind::MaxDepthExceeded, MAX_DEPTH)
+        );
+    }
+
+    #[test]
+    fn rejects_hostile_nesting_without_stack_overflow() {
+        assert_eq!(
+            rejected(&b"l".repeat(1_000_000)),
+            (ErrorKind::MaxDepthExceeded, MAX_DEPTH)
+        );
     }
 }
