@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, btree_map::Entry},
     error::Error,
     fmt::{self, Display, Formatter},
 };
@@ -34,16 +35,15 @@ impl<'src> Decoder<'src> {
         match self.peek()? {
             b'i' => self.int().map(Value::Int),
             b'0'..=b'9' => self.bytes().map(Value::Bytes),
+            b'l' | b'd' if depth >= MAX_DEPTH => Err(self.error(ErrorKind::MaxDepthExceeded)),
             b'l' => self.list(depth).map(Value::List),
+            b'd' => self.dict(depth).map(Value::Dict),
             other => Err(self.error(ErrorKind::UnexpectedByte(other))),
         }
     }
 
     /// `l<values>e`; its elements sit one level deeper than the list itself.
     fn list(&mut self, depth: usize) -> Result<Vec<Value<'src>>, DecodeError> {
-        if depth >= MAX_DEPTH {
-            return Err(self.error(ErrorKind::MaxDepthExceeded));
-        }
         self.expect(b'l')?;
         let mut items = Vec::new();
         while self.peek()? != b'e' {
@@ -53,14 +53,48 @@ impl<'src> Decoder<'src> {
         Ok(items)
     }
 
+    /// `d<key><value>...e` with byte-string keys.
+    ///
+    /// Unsorted keys are accepted because real-world torrents contain them; duplicates are
+    /// rejected because readers that keep the first or the last value would disagree.
+    fn dict(&mut self, depth: usize) -> Result<BTreeMap<&'src [u8], Value<'src>>, DecodeError> {
+        self.expect(b'd')?;
+        // Sorted by key, so iteration and the future encoder see canonical order.
+        let mut entries = BTreeMap::new();
+        // Exits via `break` at the closing `e`, or early via `return`/`?` on an error.
+        loop {
+            let key_start = self.pos;
+            let key = match self.peek()? {
+                b'e' => break,
+                // A key must be a byte string, and those start with their length's digits.
+                b'0'..=b'9' => self.bytes()?,
+                other => return Err(self.error(ErrorKind::UnexpectedByte(other))),
+            };
+            // Checked before parsing the value, so a duplicate costs nothing to reject.
+            let Entry::Vacant(entry) = entries.entry(key) else {
+                return Err(DecodeError {
+                    kind: ErrorKind::DuplicateKey,
+                    offset: key_start,
+                });
+            };
+            entry.insert(self.value(depth + 1)?);
+        }
+        self.expect(b'e')?;
+        Ok(entries)
+    }
+
     /// `<length>:<bytes>`; the length is canonical like an integer.
     fn bytes(&mut self) -> Result<&'src [u8], DecodeError> {
+        // `3:cow` -> length 3; `digits` also rejects a missing or leading-zero length.
         let length = self.digits(self.pos)?;
         self.expect(b':')?;
         let start = self.pos;
+        // `None` when the length does not fit `usize` (32-bit targets) or `start + length`
+        // overflows; both mean the input cannot be that long, so they end up as `UnexpectedEnd`.
         let end = usize::try_from(length)
             .ok()
             .and_then(|length| start.checked_add(length));
+        // `get` returns `None` instead of panicking when the input is shorter than `end`.
         let data = end
             .and_then(|end| self.input.get(start..end))
             .ok_or(DecodeError {
@@ -68,6 +102,7 @@ impl<'src> Decoder<'src> {
                 offset: self.input.len(),
             })?;
         self.pos += data.len();
+        // A sub-slice of the input: borrowed, not copied.
         Ok(data)
     }
 
@@ -174,6 +209,8 @@ pub enum ErrorKind {
     TrailingData,
     /// Values are nested deeper than the decoder allows.
     MaxDepthExceeded,
+    /// A dictionary key that already appeared in the same dictionary.
+    DuplicateKey,
 }
 
 impl Display for ErrorKind {
@@ -186,6 +223,7 @@ impl Display for ErrorKind {
             Self::NumberOverflow => f.write_str("number out of range"),
             Self::TrailingData => f.write_str("data after the root value"),
             Self::MaxDepthExceeded => f.write_str("maximum nesting depth exceeded"),
+            Self::DuplicateKey => f.write_str("duplicate dictionary key"),
         }
     }
 }
@@ -429,5 +467,94 @@ mod tests {
             rejected(&b"l".repeat(1_000_000)),
             (ErrorKind::MaxDepthExceeded, MAX_DEPTH)
         );
+    }
+
+    #[test]
+    fn decodes_empty_dict() {
+        assert_eq!(decode(b"de"), Ok(Value::Dict(BTreeMap::new())));
+    }
+
+    #[test]
+    fn decodes_dict() {
+        assert_eq!(
+            decode(b"d3:cow3:moo4:spaml1:aee"),
+            Ok(Value::Dict(BTreeMap::from([
+                (b"cow".as_slice(), Value::Bytes(b"moo")),
+                (b"spam".as_slice(), Value::List(vec![Value::Bytes(b"a")])),
+            ])))
+        );
+    }
+
+    #[test]
+    fn decodes_nested_dict() {
+        assert_eq!(
+            // {"announce": "http://t",
+            //  "info": {"files": [{"length": 5, "path": ["a", "b.txt"]}], "name": "dir"}}
+            decode(b"d8:announce8:http://t4:infod5:filesld6:lengthi5e4:pathl1:a5:b.txteee4:name3:diree"),
+            Ok(Value::Dict(BTreeMap::from([
+                (b"announce".as_slice(), Value::Bytes(b"http://t")),
+                (
+                    b"info".as_slice(),
+                    Value::Dict(BTreeMap::from([
+                        (
+                            b"files".as_slice(),
+                            Value::List(vec![Value::Dict(BTreeMap::from([
+                                (b"length".as_slice(), Value::Int(5)),
+                                (
+                                    b"path".as_slice(),
+                                    Value::List(vec![Value::Bytes(b"a"), Value::Bytes(b"b.txt")])
+                                ),
+                            ]))])
+                        ),
+                        (b"name".as_slice(), Value::Bytes(b"dir")),
+                    ]))
+                ),
+            ])))
+        );
+    }
+
+    #[test]
+    fn decodes_unsorted_dict() {
+        assert_eq!(
+            decode(b"d4:spami1e3:cowi2ee"),
+            Ok(Value::Dict(BTreeMap::from([
+                (b"cow".as_slice(), Value::Int(2)),
+                (b"spam".as_slice(), Value::Int(1)),
+            ])))
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_key() {
+        assert_eq!(
+            rejected(b"d3:cowi1e3:cowi2ee"),
+            (ErrorKind::DuplicateKey, 9)
+        );
+    }
+
+    #[test]
+    fn rejects_non_string_key() {
+        assert_eq!(rejected(b"di1ei2ee"), (ErrorKind::UnexpectedByte(b'i'), 1));
+    }
+
+    #[test]
+    fn rejects_key_without_value() {
+        assert_eq!(rejected(b"d3:cowe"), (ErrorKind::UnexpectedByte(b'e'), 6));
+    }
+
+    #[test]
+    fn rejects_unterminated_dict() {
+        assert_eq!(rejected(b"d3:cowi1e"), (ErrorKind::UnexpectedEnd, 9));
+    }
+
+    #[test]
+    fn dict_counts_towards_nesting_limit() {
+        let input = [
+            b"l".repeat(MAX_DEPTH),
+            b"de".to_vec(),
+            b"e".repeat(MAX_DEPTH),
+        ]
+        .concat();
+        assert_eq!(rejected(&input), (ErrorKind::MaxDepthExceeded, MAX_DEPTH));
     }
 }
