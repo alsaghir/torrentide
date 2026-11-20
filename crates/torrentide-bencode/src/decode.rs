@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use crate::Value;
+use crate::{Dict, Value};
 
 /// Each nested container is one recursive call, so this bounds stack use on untrusted input.
 const MAX_DEPTH: usize = 64;
@@ -57,7 +57,8 @@ impl<'src> Decoder<'src> {
     ///
     /// Unsorted keys are accepted because real-world torrents contain them; duplicates are
     /// rejected because readers that keep the first or the last value would disagree.
-    fn dict(&mut self, depth: usize) -> Result<BTreeMap<&'src [u8], Value<'src>>, DecodeError> {
+    fn dict(&mut self, depth: usize) -> Result<Dict<'src>, DecodeError> {
+        let start = self.pos;
         self.expect(b'd')?;
         // Sorted by key, so iteration and the future encoder see canonical order.
         let mut entries = BTreeMap::new();
@@ -80,7 +81,8 @@ impl<'src> Decoder<'src> {
             entry.insert(self.value(depth + 1)?);
         }
         self.expect(b'e')?;
-        Ok(entries)
+        // `start..pos` now spans from the `d` through the closing `e`, borrowed from the input.
+        Ok(Dict::new(entries, &self.input[start..self.pos]))
     }
 
     /// `<length>:<bytes>`; the length is canonical like an integer.
@@ -469,19 +471,27 @@ mod tests {
         );
     }
 
+    fn dict<'a, const N: usize>(raw: &'a [u8], entries: [(&'a [u8], Value<'a>); N]) -> Value<'a> {
+        Value::Dict(Dict::new(BTreeMap::from(entries), raw))
+    }
+
     #[test]
     fn decodes_empty_dict() {
-        assert_eq!(decode(b"de"), Ok(Value::Dict(BTreeMap::new())));
+        assert_eq!(decode(b"de"), Ok(dict(b"de", [])));
     }
 
     #[test]
     fn decodes_dict() {
+        let input = b"d3:cow3:moo4:spaml1:aee";
         assert_eq!(
-            decode(b"d3:cow3:moo4:spaml1:aee"),
-            Ok(Value::Dict(BTreeMap::from([
-                (b"cow".as_slice(), Value::Bytes(b"moo")),
-                (b"spam".as_slice(), Value::List(vec![Value::Bytes(b"a")])),
-            ])))
+            decode(input),
+            Ok(dict(
+                input,
+                [
+                    (b"cow", Value::Bytes(b"moo")),
+                    (b"spam", Value::List(vec![Value::Bytes(b"a")])),
+                ]
+            ))
         );
     }
 
@@ -491,36 +501,49 @@ mod tests {
             // {"announce": "http://t",
             //  "info": {"files": [{"length": 5, "path": ["a", "b.txt"]}], "name": "dir"}}
             decode(b"d8:announce8:http://t4:infod5:filesld6:lengthi5e4:pathl1:a5:b.txteee4:name3:diree"),
-            Ok(Value::Dict(BTreeMap::from([
-                (b"announce".as_slice(), Value::Bytes(b"http://t")),
-                (
-                    b"info".as_slice(),
-                    Value::Dict(BTreeMap::from([
-                        (
-                            b"files".as_slice(),
-                            Value::List(vec![Value::Dict(BTreeMap::from([
-                                (b"length".as_slice(), Value::Int(5)),
+            Ok(dict(
+                b"d8:announce8:http://t4:infod5:filesld6:lengthi5e4:pathl1:a5:b.txteee4:name3:diree",
+                [
+                    (b"announce", Value::Bytes(b"http://t")),
+                    (
+                        b"info",
+                        dict(
+                            b"d5:filesld6:lengthi5e4:pathl1:a5:b.txteee4:name3:dire",
+                            [
                                 (
-                                    b"path".as_slice(),
-                                    Value::List(vec![Value::Bytes(b"a"), Value::Bytes(b"b.txt")])
+                                    b"files",
+                                    Value::List(vec![dict(
+                                        b"d6:lengthi5e4:pathl1:a5:b.txtee",
+                                        [
+                                            (b"length", Value::Int(5)),
+                                            (
+                                                b"path",
+                                                Value::List(vec![
+                                                    Value::Bytes(b"a"),
+                                                    Value::Bytes(b"b.txt")
+                                                ])
+                                            ),
+                                        ]
+                                    )])
                                 ),
-                            ]))])
-                        ),
-                        (b"name".as_slice(), Value::Bytes(b"dir")),
-                    ]))
-                ),
-            ])))
+                                (b"name", Value::Bytes(b"dir")),
+                            ]
+                        )
+                    ),
+                ]
+            ))
         );
     }
 
     #[test]
-    fn decodes_unsorted_dict() {
+    fn decodes_unsorted_dict_keeping_raw_order() {
+        let input = b"d4:spami1e3:cowi2ee";
         assert_eq!(
-            decode(b"d4:spami1e3:cowi2ee"),
-            Ok(Value::Dict(BTreeMap::from([
-                (b"cow".as_slice(), Value::Int(2)),
-                (b"spam".as_slice(), Value::Int(1)),
-            ])))
+            decode(input),
+            Ok(dict(
+                input,
+                [(b"cow", Value::Int(2)), (b"spam", Value::Int(1))]
+            ))
         );
     }
 

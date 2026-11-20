@@ -4,4 +4,4 @@ mod decode;
 mod value;
 
 pub use decode::{DecodeError, ErrorKind, decode};
-pub use value::Value;
+pub use value::{Dict, Value};
