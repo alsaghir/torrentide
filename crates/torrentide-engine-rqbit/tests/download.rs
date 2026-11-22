@@ -1,31 +1,12 @@
 //! Downloads a torrent from an in-process seeder over loopback: no DHT, tracker or LSD.
 
-use std::{net::Ipv4Addr, path::Path, sync::Arc, time::Duration};
+mod common;
 
-use librqbit::{
-    AddTorrent, AddTorrentOptions, CreateTorrentOptions, ListenerOptions, Session, SessionOptions,
-    create_torrent, spawn_utils::BlockingSpawner,
-};
+use std::{net::Ipv4Addr, path::Path, time::Duration};
+
+use common::{PAYLOAD_NAME, isolated_session, payload_torrent};
+use librqbit::{AddTorrent, AddTorrentOptions, ListenerOptions};
 use torrentide_engine_rqbit::download;
-
-const PIECE_LENGTH: u32 = 32 * 1024;
-// Not a multiple of the piece length, so the short last piece is covered too.
-const FILE_LENGTH: usize = 10 * PIECE_LENGTH as usize + 123;
-const FILE_NAME: &str = "payload.bin";
-
-async fn isolated_session(dir: &Path, listen: Option<ListenerOptions>) -> Arc<Session> {
-    Session::new_with_opts(
-        dir.to_owned(),
-        SessionOptions {
-            dht: None,
-            disable_local_service_discovery: true,
-            listen,
-            ..SessionOptions::default()
-        },
-    )
-    .await
-    .expect("session starts")
-}
 
 fn folder(path: &Path) -> String {
     path.to_str().expect("temp paths are UTF-8").to_owned()
@@ -34,22 +15,7 @@ fn folder(path: &Path) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn downloads_file_from_local_seeder() {
     let seed_dir = tempfile::tempdir().unwrap();
-    let content: Vec<u8> = (0..FILE_LENGTH)
-        .map(|i| u8::try_from(i % 251).unwrap())
-        .collect();
-    let file = seed_dir.path().join(FILE_NAME);
-    std::fs::write(&file, &content).unwrap();
-
-    let torrent = create_torrent(
-        &file,
-        CreateTorrentOptions {
-            piece_length: Some(PIECE_LENGTH),
-            ..CreateTorrentOptions::default()
-        },
-        &BlockingSpawner::new(1),
-    )
-    .await
-    .unwrap();
+    let (content, torrent) = payload_torrent(seed_dir.path()).await;
     let torrent_bytes = torrent.as_bytes().unwrap();
 
     let seeder = isolated_session(
@@ -93,7 +59,7 @@ async fn downloads_file_from_local_seeder() {
     .unwrap();
 
     assert_eq!(
-        std::fs::read(leech_dir.path().join(FILE_NAME)).unwrap(),
+        std::fs::read(leech_dir.path().join(PAYLOAD_NAME)).unwrap(),
         content
     );
 }

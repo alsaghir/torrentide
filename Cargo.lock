@@ -2960,6 +2960,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "torrentide-core"
+version = "0.0.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "torrentide-engine-rqbit"
 version = "0.0.0"
 dependencies = [
@@ -2967,6 +2974,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "torrentide-core",
 ]
 
 [[package]]

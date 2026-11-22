@@ -9,10 +9,12 @@ license.workspace = true
 repository.workspace = true
 readme.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 librqbit.workspace = true
 thiserror.workspace = true
+torrentide-core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

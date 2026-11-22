@@ -42,6 +42,12 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Workspace path dependencies have no version requirement; that is not a wildcard risk.
 allow-wildcard-paths = true
+# Architecture rules. `wrappers` lists the only crates allowed to depend on
+# the banned crate directly, so the rules also hold transitively. Each rule is added together
+# with the crate it constrains.
+deny = [
+    { crate = "librqbit", wrappers = ["torrentide-engine-rqbit"], reason = "only the engine adapter uses librqbit; everything else goes through torrentide-core's Engine trait" },
+]
 
 [sources]
 unknown-registry = "deny"
