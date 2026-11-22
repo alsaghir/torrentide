@@ -1,6 +1,10 @@
 //! Torrentide's client logic, independent of the BitTorrent engine and the UI.
 
+mod paths;
+
 use std::{fmt, path::PathBuf};
+
+pub use paths::{APP_NAME, HomeNotFound, Paths};
 
 /// An error from a dependency, kept as the `source` of a Torrentide error.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;

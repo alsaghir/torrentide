@@ -2963,6 +2963,7 @@ dependencies = [
 name = "torrentide-core"
 version = "0.0.0"
 dependencies = [
+ "directories",
  "thiserror 2.0.21",
 ]
 

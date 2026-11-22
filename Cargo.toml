@@ -13,6 +13,7 @@ rust-version = "1.100"
 publish = false
 
 [workspace.dependencies]
+directories = "6"
 # Default features pull `http-api-client` (unused) and `default-tls`, whose SHA-1 is `crypto-hash`
 # → system OpenSSL on Linux. `rust-tls` uses aws-lc-rs for both tracker HTTPS and piece SHA-1:
 # one crypto library, built from source, no system dependency.
