@@ -17,6 +17,9 @@ targets = [
 unsound = "all"
 unmaintained = "workspace"
 yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2026-0293", reason = "The released librqbit-utp 0.7.0 depends on vulnerable ringbuf 0.4.8; upstream has updated to ringbuf 0.5.2, but no patched librqbit-utp release is published yet" },
+]
 
 [licenses]
 # Every licence here must be compatible with distributing Torrentide under MPL-2.0.
