@@ -82,6 +82,9 @@
               commonArgs
               // {
                 inherit cargoArtifacts;
+                # librqbit builds a rustls HTTPS client at session start, which fails without CA
+                # certificates; the sandbox has none, so provide the same bundle NixOS ships.
+                SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
               }
             );
 

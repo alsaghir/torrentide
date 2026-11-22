@@ -1,0 +1,2 @@
+# `..` keeps Clippy's default list; added entries are proper nouns, not code identifiers.
+doc-valid-idents = ["BitTorrent", ".."]

@@ -1,0 +1,22 @@
+[package]
+name = "torrentide-engine-rqbit"
+description = "librqbit-backed BitTorrent engine for the Torrentide client"
+keywords = ["bittorrent", "torrent", "p2p"]
+categories = ["network-programming"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+librqbit.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true
