@@ -50,6 +50,24 @@ pub enum RemoveMode {
     DeleteFiles,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TorrentState {
+    /// Verifying the files already on disk.
+    Checking,
+    Paused,
+    /// Downloading or seeding.
+    Running,
+    /// Stopped by an error; resuming retries.
+    Failed(String),
+}
+
+/// A torrent as seen at one moment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TorrentStatus {
+    pub id: TorrentId,
+    pub state: TorrentState,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error("torrent {0} is already added")]
@@ -78,6 +96,22 @@ pub trait Engine: Send + Sync + 'static {
         options: AddOptions,
     ) -> impl Future<Output = Result<TorrentId, EngineError>> + Send;
 
+    /// Stops downloading and seeding a torrent; does nothing if it is paused already.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if the engine does not have it;
+    /// [`EngineError::Backend`] if the engine cannot pause it in its current state.
+    fn pause(&self, id: TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// Starts a paused or failed torrent; does nothing if it is running already.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if the engine does not have it;
+    /// [`EngineError::Backend`] if the engine cannot start it.
+    fn resume(&self, id: TorrentId) -> impl Future<Output = Result<(), EngineError>> + Send;
+
     /// Stops a torrent and forgets it.
     ///
     /// # Errors
@@ -89,6 +123,9 @@ pub trait Engine: Send + Sync + 'static {
         id: TorrentId,
         mode: RemoveMode,
     ) -> impl Future<Output = Result<(), EngineError>> + Send;
+
+    /// The status of every torrent the engine has, in no particular order.
+    fn snapshot(&self) -> Vec<TorrentStatus>;
 }
 
 #[cfg(test)]
