@@ -19,6 +19,8 @@ directories = "6"
 # one crypto library, built from source, no system dependency.
 librqbit = { version = "9", default-features = false, features = ["rust-tls"] }
 serde = { version = "1", features = ["derive"] }
+# Already in the tree (via uuid); `thread_rng` gives `rand::random_range`.
+rand = "0.10"
 tempfile = "3"
 torrentide-core = { path = "crates/torrentide-core" }
 thiserror = "2"

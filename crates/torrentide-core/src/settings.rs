@@ -1,8 +1,12 @@
-//! Global settings and their TOML form.
+//! Global settings, their TOML form and their file.
+
+mod file;
 
 use std::{num::NonZeroU16, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+pub use file::{LoadedSettings, SettingsFile, SettingsFileError};
 
 /// Format version written to and required from the file; bumped on incompatible changes.
 const VERSION: i64 = 1;
@@ -41,6 +45,8 @@ pub struct BitTorrent {
 /// Settings text that cannot be read, or settings that cannot be written as TOML.
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
+    #[error("settings are not UTF-8 text")]
+    NotUtf8(#[source] std::str::Utf8Error),
     #[error("settings are not valid")]
     Invalid(#[source] toml::de::Error),
     #[error("settings have no `{VERSION_KEY}`")]

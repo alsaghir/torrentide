@@ -6,7 +6,10 @@ mod settings;
 use std::{fmt, path::PathBuf};
 
 pub use paths::{APP_NAME, HomeNotFound, Paths};
-pub use settings::{BitTorrent, Connection, Downloads, Settings, SettingsError};
+pub use settings::{
+    BitTorrent, Connection, Downloads, LoadedSettings, Settings, SettingsError, SettingsFile,
+    SettingsFileError,
+};
 
 /// An error from a dependency, kept as the `source` of a Torrentide error.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
