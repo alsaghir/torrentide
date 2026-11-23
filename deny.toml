@@ -47,6 +47,7 @@ allow-wildcard-paths = true
 # with the crate it constrains.
 deny = [
     { crate = "librqbit", wrappers = ["torrentide-engine-rqbit"], reason = "only the engine adapter uses librqbit; everything else goes through torrentide-core's Engine trait" },
+    { crate = "rusqlite", wrappers = ["torrentide-core"], reason = "one crate owns the database; everything else goes through its API" },
 ]
 
 [sources]

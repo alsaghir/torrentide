@@ -1,10 +1,12 @@
 //! Torrentide's client logic, independent of the BitTorrent engine and the UI.
 
+mod database;
 mod paths;
 mod settings;
 
 use std::{fmt, path::PathBuf};
 
+pub use database::{Database, DatabaseError};
 pub use paths::{APP_NAME, HomeNotFound, Paths};
 pub use settings::{
     BitTorrent, Connection, Downloads, LoadedSettings, Settings, SettingsError, SettingsFile,
