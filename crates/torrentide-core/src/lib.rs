@@ -6,7 +6,7 @@ mod settings;
 
 use std::{fmt, path::PathBuf};
 
-pub use database::{Database, DatabaseError};
+pub use database::{Database, DatabaseError, TorrentRecord};
 pub use paths::{APP_NAME, HomeNotFound, Paths};
 pub use settings::{
     BitTorrent, Connection, Downloads, LoadedSettings, Settings, SettingsError, SettingsFile,

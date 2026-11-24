@@ -3,7 +3,7 @@
 use std::fs;
 
 use rusqlite::Connection;
-use torrentide_core::{Database, DatabaseError, Paths};
+use torrentide_core::{Database, DatabaseError, Paths, TorrentId, TorrentRecord};
 
 fn portable() -> (tempfile::TempDir, Paths) {
     let root = tempfile::tempdir().expect("temp dir");
@@ -91,4 +91,88 @@ fn a_file_that_is_not_a_database_is_refused() {
         [0xAB_u8; 4096],
         "the file is left untouched"
     );
+}
+
+fn id(byte: u8) -> TorrentId {
+    TorrentId::from_info_hash([byte; 20])
+}
+
+#[test]
+fn added_torrents_are_listed_in_queue_order() {
+    let (_root, paths) = portable();
+    let db = Database::open(&paths).unwrap();
+
+    db.insert_torrent(id(1), 100).unwrap();
+    db.insert_torrent(id(2), 200).unwrap();
+
+    assert_eq!(
+        db.torrents().unwrap(),
+        vec![
+            TorrentRecord {
+                id: id(1),
+                queue_position: 0,
+                added_at: 100,
+                completed_at: None,
+            },
+            TorrentRecord {
+                id: id(2),
+                queue_position: 1,
+                added_at: 200,
+                completed_at: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn adding_a_known_torrent_is_refused() {
+    let (_root, paths) = portable();
+    let db = Database::open(&paths).unwrap();
+    db.insert_torrent(id(1), 100).unwrap();
+
+    let error = db.insert_torrent(id(1), 200).unwrap_err();
+
+    assert!(matches!(error, DatabaseError::Sqlite { .. }), "{error:?}");
+    assert_eq!(db.torrents().unwrap().len(), 1);
+}
+
+#[test]
+fn removing_reports_whether_the_torrent_was_known() {
+    let (_root, paths) = portable();
+    let db = Database::open(&paths).unwrap();
+    db.insert_torrent(id(1), 100).unwrap();
+
+    assert!(db.delete_torrent(id(1)).unwrap());
+    assert!(!db.delete_torrent(id(1)).unwrap());
+    assert_eq!(db.torrents().unwrap(), []);
+}
+
+#[test]
+fn removing_keeps_the_other_positions() {
+    let (_root, paths) = portable();
+    let db = Database::open(&paths).unwrap();
+    db.insert_torrent(id(1), 100).unwrap();
+    db.insert_torrent(id(2), 200).unwrap();
+    db.insert_torrent(id(3), 300).unwrap();
+
+    db.delete_torrent(id(2)).unwrap();
+
+    let rows = db.torrents().unwrap();
+    let positions: Vec<_> = rows.iter().map(|r| r.queue_position).collect();
+    let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
+    assert_eq!(positions, [0, 2]);
+    assert_eq!(ids, [id(1), id(3)]);
+}
+
+#[test]
+fn torrent_rows_survive_reopening() {
+    let (_root, paths) = portable();
+    let db = Database::open(&paths).unwrap();
+    db.insert_torrent(id(1), 100).unwrap();
+    drop(db);
+
+    let db = Database::open(&paths).unwrap();
+
+    assert_eq!(db.torrents().unwrap().len(), 1);
+    assert_eq!(db.torrents().unwrap()[0].id, id(1));
 }

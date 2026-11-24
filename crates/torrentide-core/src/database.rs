@@ -7,7 +7,7 @@ use std::{
 
 use rusqlite::Connection;
 
-use crate::Paths;
+use crate::{Paths, TorrentId};
 
 const FILE_NAME: &str = "torrentide.sqlite3";
 
@@ -23,11 +23,23 @@ const MIGRATIONS: &[&str] = &["
     ) STRICT;
 "];
 
+/// Torrentide's data about one torrent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TorrentRecord {
+    pub id: TorrentId,
+    /// Lower runs first; positions can have gaps after removals.
+    pub queue_position: u32,
+    /// Unix time in seconds.
+    pub added_at: i64,
+    /// Unix time in seconds; `None` until the download completed.
+    pub completed_at: Option<i64>,
+}
+
 /// An open database with the current schema.
 #[derive(Debug)]
 pub struct Database {
-    #[expect(dead_code, reason = "read by the torrent queries of the next unit")]
     connection: Connection,
+    path: PathBuf,
 }
 
 /// The database cannot be opened or brought to the current schema.
@@ -89,7 +101,73 @@ impl Database {
             .pragma_update(None, "foreign_keys", true)
             .map_err(sqlite)?;
         migrate(&mut connection, &path)?;
-        Ok(Self { connection })
+        Ok(Self { connection, path })
+    }
+
+    fn sqlite(&self) -> impl Fn(rusqlite::Error) -> DatabaseError + '_ {
+        |source| DatabaseError::Sqlite {
+            path: self.path.clone(),
+            source,
+        }
+    }
+
+    /// Appends a torrent to the end of the queue.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseError::Sqlite`] if the torrent is already stored (the `UNIQUE` constraint on
+    /// `info_hash` rejects it) or the database cannot be written.
+    pub fn insert_torrent(&self, id: TorrentId, added_at: i64) -> Result<(), DatabaseError> {
+        self.connection
+            .execute(
+                "INSERT INTO torrent (info_hash, queue_position, added_at) \
+                 SELECT ?1, coalesce(max(queue_position) + 1, 0), ?2 FROM torrent",
+                rusqlite::params![id.info_hash(), added_at],
+            )
+            .map_err(self.sqlite())?;
+        Ok(())
+    }
+
+    /// Removes a torrent row. Returns `true` if a row was deleted.
+    ///
+    /// Other positions are not renumbered.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseError::Sqlite`] if the database cannot be written.
+    pub fn delete_torrent(&self, id: TorrentId) -> Result<bool, DatabaseError> {
+        let changed = self
+            .connection
+            .execute("DELETE FROM torrent WHERE info_hash = ?1", [id.info_hash()])
+            .map_err(self.sqlite())?;
+        Ok(changed > 0)
+    }
+
+    /// All torrent rows, ordered by queue position (ascending).
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseError::Sqlite`] if the database cannot be read.
+    pub fn torrents(&self) -> Result<Vec<TorrentRecord>, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT info_hash, queue_position, added_at, completed_at \
+                 FROM torrent ORDER BY queue_position",
+            )
+            .map_err(self.sqlite())?;
+        let rows = statement
+            .query_map([], |row| {
+                let info_hash: [u8; 20] = row.get(0)?;
+                Ok(TorrentRecord {
+                    id: TorrentId::from_info_hash(info_hash),
+                    queue_position: row.get(1)?,
+                    added_at: row.get(2)?,
+                    completed_at: row.get(3)?,
+                })
+            })
+            .map_err(self.sqlite())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(self.sqlite())
     }
 }
 
