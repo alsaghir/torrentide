@@ -1,0 +1,23 @@
+[package]
+name = "torrentide-cli"
+description = "Headless command-line front end of the Torrentide BitTorrent client"
+keywords = ["bittorrent", "torrent", "p2p", "cli"]
+categories = ["network-programming", "command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+thiserror.workspace = true
+torrentide-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
