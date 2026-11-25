@@ -52,7 +52,7 @@ fn state(engine: &RqbitEngine, id: TorrentId) -> Option<TorrentState> {
 }
 
 /// Polls until the torrent reaches `expected`: the hash check runs in the background.
-// TODO(E1 events): wait on engine events instead of polling.
+// TODO: wait on engine events instead of polling once the engine reports them.
 async fn wait_for_state(engine: &RqbitEngine, id: TorrentId, expected: TorrentState) {
     tokio::time::timeout(Duration::from_secs(10), async {
         while state(engine, id).as_ref() != Some(&expected) {

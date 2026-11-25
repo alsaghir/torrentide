@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Directory name under each base directory; Undertow's touch point T3 changes only this.
+/// Directory name under each base directory.
 pub const APP_NAME: &str = "torrentide";
 
 /// The home directory, needed to resolve the standard directories, could not be determined.
