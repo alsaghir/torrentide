@@ -36,13 +36,20 @@ impl SharedEngine {
 }
 
 impl Engine for SharedEngine {
+    fn torrent_id(&self, source: &AddSource) -> Result<TorrentId, EngineError> {
+        let AddSource::TorrentFile(bytes) = source;
+        Ok(TorrentId::from_info_hash([bytes[0]; 20]))
+    }
+
     fn add(
         &self,
         source: AddSource,
         options: AddOptions,
     ) -> impl Future<Output = Result<TorrentId, EngineError>> {
-        let AddSource::TorrentFile(bytes) = source;
-        let id = TorrentId::from_info_hash([bytes[0]; 20]);
+        let id = match self.torrent_id(&source) {
+            Ok(id) => id,
+            Err(error) => return ready(Err(error)),
+        };
         let mut torrents = self.0.lock().unwrap();
         ready(if torrents.iter().any(|torrent| torrent.id == id) {
             Err(EngineError::AlreadyAdded(id))

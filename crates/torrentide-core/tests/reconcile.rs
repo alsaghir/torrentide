@@ -14,6 +14,10 @@ fn unused<T>() -> std::future::Ready<T> {
 struct FixedEngine(Vec<TorrentId>);
 
 impl Engine for FixedEngine {
+    fn torrent_id(&self, _: &AddSource) -> Result<TorrentId, EngineError> {
+        unreachable!("reconcile only reads the snapshot")
+    }
+
     fn add(
         &self,
         _: AddSource,

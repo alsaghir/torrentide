@@ -105,6 +105,12 @@ fn backend(error: impl Into<BoxError>) -> EngineError {
 }
 
 impl Engine for RqbitEngine {
+    fn torrent_id(&self, source: &AddSource) -> Result<TorrentId, EngineError> {
+        let AddSource::TorrentFile(bytes) = source;
+        let torrent = librqbit::torrent_from_bytes(bytes).map_err(backend)?;
+        Ok(TorrentId::from_info_hash(torrent.info_hash.0))
+    }
+
     async fn add(&self, source: AddSource, options: AddOptions) -> Result<TorrentId, EngineError> {
         let AddSource::TorrentFile(bytes) = source;
         let output_folder = options.save_path.to_str().ok_or_else(|| {

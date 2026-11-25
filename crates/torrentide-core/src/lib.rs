@@ -99,6 +99,13 @@ pub enum EngineError {
 /// Futures are `Send` so callers can run them on a multi-threaded runtime; the engine is
 /// `Send + Sync + 'static` so it can be shared with spawned tasks.
 pub trait Engine: Send + Sync + 'static {
+    /// The id `source` gets when it is added, without adding it.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Backend`] if the metadata is invalid.
+    fn torrent_id(&self, source: &AddSource) -> Result<TorrentId, EngineError>;
+
     /// Adds a torrent and starts it unless [`AddOptions::start_paused`] is set.
     ///
     /// # Errors

@@ -71,6 +71,32 @@ async fn add_returns_the_info_hash() {
 }
 
 #[tokio::test]
+async fn torrent_id_is_the_id_add_returns() {
+    let fixture = fixture().await;
+
+    let id = fixture
+        .engine
+        .torrent_id(&AddSource::TorrentFile(fixture.torrent_file.clone()))
+        .unwrap();
+
+    assert_eq!(fixture.engine.snapshot(), Vec::new());
+    assert_eq!(id, fixture.id);
+    assert_eq!(add_paused(&fixture).await.unwrap(), id);
+}
+
+#[tokio::test]
+async fn torrent_id_rejects_invalid_metadata() {
+    let fixture = fixture().await;
+
+    let error = fixture
+        .engine
+        .torrent_id(&AddSource::TorrentFile(b"not bencode".to_vec()))
+        .unwrap_err();
+
+    assert!(matches!(error, EngineError::Backend(_)));
+}
+
+#[tokio::test]
 async fn adding_a_torrent_twice_is_rejected() {
     let fixture = fixture().await;
     add_paused(&fixture).await.unwrap();
