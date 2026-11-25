@@ -1,5 +1,6 @@
 //! Torrentide's client logic, independent of the BitTorrent engine and the UI.
 
+mod client;
 mod database;
 mod paths;
 mod reconcile;
@@ -7,6 +8,7 @@ mod settings;
 
 use std::{fmt, path::PathBuf};
 
+pub use client::ClientHandle;
 pub use database::{Database, DatabaseError, TorrentRecord};
 pub use paths::{APP_NAME, HomeNotFound, Paths};
 pub use reconcile::{Reconciled, reconcile};
