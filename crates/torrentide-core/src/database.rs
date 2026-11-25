@@ -111,21 +111,24 @@ impl Database {
         }
     }
 
-    /// Appends a torrent to the end of the queue.
+    /// Appends a torrent to the end of the queue. Returns `false`, changing nothing, if the
+    /// torrent is already stored.
     ///
     /// # Errors
     ///
-    /// [`DatabaseError::Sqlite`] if the torrent is already stored (the `UNIQUE` constraint on
-    /// `info_hash` rejects it) or the database cannot be written.
-    pub fn insert_torrent(&self, id: TorrentId, added_at: i64) -> Result<(), DatabaseError> {
-        self.connection
+    /// [`DatabaseError::Sqlite`] if the database cannot be written.
+    pub fn insert_torrent(&self, id: TorrentId, added_at: i64) -> Result<bool, DatabaseError> {
+        let changed = self
+            .connection
             .execute(
+                // `WHERE true` lets SQLite parse `ON CONFLICT` after a `SELECT`.
                 "INSERT INTO torrent (info_hash, queue_position, added_at) \
-                 SELECT ?1, coalesce(max(queue_position) + 1, 0), ?2 FROM torrent",
+                 SELECT ?1, coalesce(max(queue_position) + 1, 0), ?2 FROM torrent WHERE true \
+                 ON CONFLICT (info_hash) DO NOTHING",
                 rusqlite::params![id.info_hash(), added_at],
             )
             .map_err(self.sqlite())?;
-        Ok(())
+        Ok(changed > 0)
     }
 
     /// Removes a torrent row. Returns `true` if a row was deleted.

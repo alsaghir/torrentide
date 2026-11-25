@@ -102,8 +102,8 @@ fn added_torrents_are_listed_in_queue_order() {
     let (_root, paths) = portable();
     let db = Database::open(&paths).unwrap();
 
-    db.insert_torrent(id(1), 100).unwrap();
-    db.insert_torrent(id(2), 200).unwrap();
+    assert!(db.insert_torrent(id(1), 100).unwrap());
+    assert!(db.insert_torrent(id(2), 200).unwrap());
 
     assert_eq!(
         db.torrents().unwrap(),
@@ -125,15 +125,21 @@ fn added_torrents_are_listed_in_queue_order() {
 }
 
 #[test]
-fn adding_a_known_torrent_is_refused() {
+fn adding_a_known_torrent_keeps_its_row() {
     let (_root, paths) = portable();
     let db = Database::open(&paths).unwrap();
     db.insert_torrent(id(1), 100).unwrap();
 
-    let error = db.insert_torrent(id(1), 200).unwrap_err();
-
-    assert!(matches!(error, DatabaseError::Sqlite { .. }), "{error:?}");
-    assert_eq!(db.torrents().unwrap().len(), 1);
+    assert!(!db.insert_torrent(id(1), 200).unwrap());
+    assert_eq!(
+        db.torrents().unwrap(),
+        [TorrentRecord {
+            id: id(1),
+            queue_position: 0,
+            added_at: 100,
+            completed_at: None,
+        }]
+    );
 }
 
 #[test]
