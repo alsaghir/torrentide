@@ -8,7 +8,7 @@ mod settings;
 
 use std::{fmt, path::PathBuf};
 
-pub use client::ClientHandle;
+pub use client::{ClientError, ClientHandle};
 pub use database::{Database, DatabaseError, TorrentRecord};
 pub use paths::{APP_NAME, HomeNotFound, Paths};
 pub use reconcile::{Reconciled, reconcile};
