@@ -17,7 +17,7 @@ thiserror.workspace = true
 torrentide-core.workspace = true
 torrentide-engine-rqbit.workspace = true
 # Multi-thread: only there does librqbit move disk I/O off the async threads (`block_in_place`).
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]
 tempfile.workspace = true

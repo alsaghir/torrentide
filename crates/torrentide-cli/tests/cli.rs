@@ -1,8 +1,9 @@
 //! The `torrentide-cli` binary, run against a temporary portable root without network access.
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 use torrentide_core::{Database, Paths, Settings, SettingsFile, TorrentId};
@@ -121,4 +122,38 @@ fn adding_a_torrent_again_fails() {
     assert!(stderr.contains("already added"), "{stderr}");
     assert_eq!(stdout(cli(root.path(), &["list"])).lines().count(), 1);
     assert!(stderr.contains(id.trim_end()), "{stderr}");
+}
+
+#[test]
+fn run_prints_the_restored_torrents() {
+    let root = root();
+    let file = torrent_file(root.path());
+    let id = stdout(add(root.path(), &file));
+    let expected = format!("{}\tpaused", id.trim_end());
+    let mut run = Command::new(env!("CARGO_BIN_EXE_torrentide-cli"))
+        .arg("--portable")
+        .arg(root.path())
+        .arg("run")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("run torrentide-cli");
+    let mut lines = BufReader::new(run.stdout.take().expect("piped stdout")).lines();
+
+    // The torrent may show as checking before it settles as paused.
+    let mut seen = Vec::new();
+    loop {
+        let snapshot: Vec<String> = lines
+            .by_ref()
+            .map(|line| line.expect("UTF-8 line"))
+            .take_while(|line| !line.is_empty())
+            .collect();
+        if snapshot == [expected.as_str()] {
+            break;
+        }
+        seen.push(snapshot);
+        assert!(seen.len() < 10, "no `{expected}` in {seen:?}");
+    }
+
+    run.kill().expect("run killed");
+    run.wait().expect("run reaped");
 }
