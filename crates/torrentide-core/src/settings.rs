@@ -40,6 +40,7 @@ pub struct Connection {
 #[serde(deny_unknown_fields)]
 pub struct BitTorrent {
     pub dht: bool,
+    pub lsd: bool,
 }
 
 /// Settings text that cannot be read, or settings that cannot be written as TOML.
@@ -64,7 +65,10 @@ impl Settings {
         Self {
             downloads: Downloads { dir: download_dir },
             connection: Connection { listen_port },
-            bittorrent: BitTorrent { dht: true },
+            bittorrent: BitTorrent {
+                dht: true,
+                lsd: true,
+            },
         }
     }
 
@@ -112,6 +116,7 @@ mod tests {
 
         [bittorrent]
         dht = false
+        lsd = false
     "#;
 
     fn settings() -> Settings {
@@ -125,6 +130,7 @@ mod tests {
     fn reads_a_settings_document() {
         let mut expected = settings();
         expected.bittorrent.dht = false;
+        expected.bittorrent.lsd = false;
 
         assert_eq!(Settings::from_toml(DOCUMENT).unwrap(), expected);
     }
@@ -155,7 +161,7 @@ mod tests {
     #[test]
     fn rejects_unknown_missing_and_out_of_range_keys() {
         let unknown = DOCUMENT.replace("dht = false", "dht = false\npex = true");
-        let missing = DOCUMENT.replace("dht = false", "");
+        let missing = DOCUMENT.replace("lsd = false\n", "");
         let zero_port = DOCUMENT.replace("51413", "0");
 
         for text in [unknown, missing, zero_port, "not toml".to_owned()] {

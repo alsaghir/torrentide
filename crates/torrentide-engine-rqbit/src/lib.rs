@@ -1,15 +1,22 @@
 //! BitTorrent engine for Torrentide, backed by librqbit.
 
-use std::{fmt, sync::Arc};
+use std::{fmt, net::Ipv6Addr, sync::Arc};
 
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session, TorrentStats,
-    TorrentStatsState, dht::Id20,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerOptions,
+    ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig, TorrentStats,
+    TorrentStatsState,
+    dht::{DhtPersistenceConfig, Id20},
 };
 use torrentide_core::{
-    AddOptions, AddSource, BoxError, Engine, EngineError, RemoveMode, TorrentId, TorrentState,
-    TorrentStatus,
+    AddOptions, AddSource, BoxError, Engine, EngineError, Paths, RemoveMode, Settings, TorrentId,
+    TorrentState, TorrentStatus,
 };
+
+/// The librqbit session's torrent list and fastresume data, under [`Paths::data_dir`].
+const SESSION_DIR_NAME: &str = "engine";
+/// The DHT routing table, under [`Paths::state_dir`]: losing it only slows the next bootstrap.
+const DHT_FILE_NAME: &str = "dht.json";
 
 /// [`Engine`] backed by a librqbit [`Session`].
 pub struct RqbitEngine {
@@ -17,6 +24,26 @@ pub struct RqbitEngine {
 }
 
 impl RqbitEngine {
+    /// Starts a session for `settings`, restoring the torrents of the last run.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Backend`] if librqbit cannot create or initialize the session.
+    pub async fn start(paths: &Paths, settings: &Settings) -> Result<Self, EngineError> {
+        let session = Session::new_with_opts(
+            settings.downloads.dir.clone(),
+            session_options(paths, settings),
+        )
+        .await
+        .map_err(backend)?;
+        Ok(Self { session })
+    }
+
+    /// Stops the session and background tasks.
+    pub async fn stop(&self) {
+        self.session.stop().await;
+    }
+
     #[must_use]
     pub const fn new(session: Arc<Session>) -> Self {
         Self { session }
@@ -32,6 +59,31 @@ impl RqbitEngine {
 impl fmt::Debug for RqbitEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RqbitEngine").finish_non_exhaustive()
+    }
+}
+
+/// librqbit options for `settings`; every file the session writes lives under `paths`.
+fn session_options(paths: &Paths, settings: &Settings) -> SessionOptions {
+    // librqbit's defaults would put both files in rqbit's own folders, outside `paths`.
+    let dht = DhtSessionConfig {
+        persistence: Some(DhtPersistenceConfig {
+            config_filename: Some(paths.state_dir().join(DHT_FILE_NAME)),
+            ..DhtPersistenceConfig::default()
+        }),
+        ..DhtSessionConfig::default()
+    };
+    SessionOptions {
+        fastresume: true,
+        persistence: Some(SessionPersistenceConfig::Json {
+            folder: Some(paths.data_dir().join(SESSION_DIR_NAME)),
+        }),
+        listen: Some(ListenerOptions {
+            listen_addr: (Ipv6Addr::UNSPECIFIED, settings.connection.listen_port.get()).into(),
+            ..ListenerOptions::default()
+        }),
+        dht: settings.bittorrent.dht.then_some(dht),
+        disable_local_service_discovery: !settings.bittorrent.lsd,
+        ..SessionOptions::default()
     }
 }
 
@@ -162,4 +214,53 @@ pub async fn download(
         .wait_until_completed()
         .await
         .map_err(|e| DownloadError::Transfer(e.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    fn settings(paths: &Paths, dht: bool) -> Settings {
+        let mut settings = Settings::first_run(paths);
+        settings.bittorrent.dht = dht;
+        settings
+    }
+
+    #[test]
+    fn session_files_stay_under_the_paths() {
+        let paths = Paths::portable(Path::new("/portable/torrentide"));
+
+        let options = session_options(&paths, &settings(&paths, true));
+
+        let Some(SessionPersistenceConfig::Json {
+            folder: Some(folder),
+        }) = options.persistence
+        else {
+            panic!("session persistence is not a JSON folder");
+        };
+        assert_eq!(folder, paths.data_dir().join(SESSION_DIR_NAME));
+        let dht_file = options
+            .dht
+            .and_then(|dht| dht.persistence)
+            .and_then(|persistence| persistence.config_filename);
+        assert_eq!(dht_file, Some(paths.state_dir().join(DHT_FILE_NAME)));
+    }
+
+    #[test]
+    fn dht_follows_the_setting() {
+        let paths = Paths::portable(Path::new("/portable/torrentide"));
+
+        assert!(
+            session_options(&paths, &settings(&paths, false))
+                .dht
+                .is_none()
+        );
+        assert!(
+            session_options(&paths, &settings(&paths, true))
+                .dht
+                .is_some()
+        );
+    }
 }
