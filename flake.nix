@@ -60,11 +60,26 @@
             ];
           };
 
+          # winit and glutin dlopen these at runtime instead of linking them.
+          guiRuntimeLibs = [
+            pkgs.wayland
+            pkgs.libxkbcommon
+            pkgs.libGL
+            pkgs.fontconfig
+            pkgs.libx11
+            pkgs.libxcursor
+            pkgs.libxi
+            pkgs.libxrandr
+          ];
+
           commonArgs = {
             inherit src;
             inherit (workspace) version;
             pname = name;
             strictDeps = true;
+            # Slint's font stack (fontique) links fontconfig at build time.
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.fontconfig ];
           };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
@@ -126,6 +141,7 @@
                 mkdir -p .sdk/bin
                 ln -sf "${codelldb}/share/vscode/extensions/vadimcn.vscode-lldb/adapter/codelldb" .sdk/bin/codelldb
                 export PATH="$PWD/.sdk/bin:$PATH"
+                export LD_LIBRARY_PATH="${lib.makeLibraryPath guiRuntimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 echo "${name} dev shell: $(rustc --version)"
               '';
             };
