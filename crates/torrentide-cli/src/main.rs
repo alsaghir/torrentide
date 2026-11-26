@@ -223,17 +223,19 @@ fn state(state: &TorrentState) -> Cow<'_, str> {
     }
 }
 
-/// Resolves on the first SIGINT or SIGTERM.
+/// Resolves on the first SIGINT, SIGTERM or SIGHUP (terminal closed).
 #[cfg(unix)]
 fn shutdown_signal() -> io::Result<impl Future<Output = ()>> {
     use tokio::signal::unix::{SignalKind, signal};
 
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
     Ok(async move {
         tokio::select! {
             _ = interrupt.recv() => {}
             _ = terminate.recv() => {}
+            _ = hangup.recv() => {}
         }
     })
 }

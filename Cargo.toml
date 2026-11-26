@@ -19,6 +19,8 @@ directories = "6"
 # → system OpenSSL on Linux. `rust-tls` uses aws-lc-rs for both tracker HTTPS and piece SHA-1:
 # one crypto library, built from source, no system dependency.
 librqbit = { version = "9", default-features = false, features = ["rust-tls"] }
+# Already in the tree (via librqbit); tests send real signals to the CLI process.
+nix = { version = "0.30", default-features = false }
 serde = { version = "1", features = ["derive"] }
 # `bundled` builds SQLite from source: one known version, no system library.
 rusqlite = { version = "0.43", features = ["bundled"] }

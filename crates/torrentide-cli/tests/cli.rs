@@ -1,9 +1,9 @@
-//! The `torrentide-cli` binary, run against a temporary portable root without network access.
+//! The `torrentide-cli` binary, run against a temporary portable root; peers only on loopback.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Lines};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, ChildStdout, Command, Output, Stdio};
 
 use tempfile::TempDir;
 use torrentide_core::{Database, Paths, Settings, SettingsFile, TorrentId};
@@ -24,12 +24,18 @@ fn stdout(output: Output) -> String {
 
 /// A portable root whose settings keep the engine off the network.
 fn root() -> TempDir {
+    root_with(|_| {})
+}
+
+/// [`root`], with `change` applied to its settings before they are saved.
+fn root_with(change: impl FnOnce(&mut Settings)) -> TempDir {
     let root = tempfile::tempdir().expect("temp dir");
     let paths = Paths::portable(root.path());
     let mut settings = Settings::first_run(&paths);
     settings.downloads.dir = root.path().join("downloads");
     settings.bittorrent.dht = false;
     settings.bittorrent.lsd = false;
+    change(&mut settings);
     fs::create_dir_all(&settings.downloads.dir).expect("downloads dir");
     SettingsFile::new(&paths)
         .save(&settings)
@@ -52,6 +58,12 @@ fn add(root: &Path, file: &Path) -> Output {
         root,
         &["add", "--paused", file.to_str().expect("UTF-8 path")],
     )
+}
+
+/// Adds `file` to start running with the next `run`; returns its id.
+fn add_running(root: &Path, file: &Path) -> String {
+    let output = cli(root, &["add", file.to_str().expect("UTF-8 path")]);
+    stdout(output).trim_end().to_owned()
 }
 
 #[test]
@@ -130,30 +142,113 @@ fn run_prints_the_restored_torrents() {
     let file = torrent_file(root.path());
     let id = stdout(add(root.path(), &file));
     let expected = format!("{}\tpaused", id.trim_end());
+    let (mut run, mut lines) = spawn_run(root.path());
+
+    wait_for_snapshot(&mut lines, &expected);
+
+    run.kill().expect("run killed");
+    run.wait().expect("run reaped");
+}
+
+/// Spawns `run` with its standard output piped and read line by line.
+fn spawn_run(root: &Path) -> (Child, Lines<BufReader<ChildStdout>>) {
     let mut run = Command::new(env!("CARGO_BIN_EXE_torrentide-cli"))
         .arg("--portable")
-        .arg(root.path())
+        .arg(root)
         .arg("run")
         .stdout(Stdio::piped())
         .spawn()
         .expect("run torrentide-cli");
-    let mut lines = BufReader::new(run.stdout.take().expect("piped stdout")).lines();
+    let lines = BufReader::new(run.stdout.take().expect("piped stdout")).lines();
+    (run, lines)
+}
 
-    // The torrent may show as checking before it settles as paused.
+/// Reads snapshots until one is exactly `expected`, a single torrent line.
+fn wait_for_snapshot(lines: &mut Lines<BufReader<ChildStdout>>, expected: &str) {
+    // The torrent may show as checking before it settles.
     let mut seen = Vec::new();
     loop {
         let snapshot: Vec<String> = lines
             .by_ref()
-            .map(|line| line.expect("UTF-8 line"))
+            .map(|line: io::Result<String>| line.expect("UTF-8 line"))
             .take_while(|line| !line.is_empty())
             .collect();
-        if snapshot == [expected.as_str()] {
-            break;
+        if snapshot == [expected] {
+            return;
         }
         seen.push(snapshot);
         assert!(seen.len() < 10, "no `{expected}` in {seen:?}");
     }
+}
 
-    run.kill().expect("run killed");
-    run.wait().expect("run reaped");
+#[cfg(unix)]
+mod unix {
+    use std::fs;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+    use std::num::NonZeroU16;
+    use std::process::{Child, ExitStatus};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use torrentide_testkit::{PAYLOAD_NAME, payload_torrent, seed};
+
+    use super::{add_running, root_with, spawn_run, wait_for_snapshot};
+
+    /// A port nothing listens on right now, on the address the engine binds.
+    fn free_port() -> NonZeroU16 {
+        let listener = TcpListener::bind((Ipv6Addr::UNSPECIFIED, 0)).expect("bind a free port");
+        let port = listener.local_addr().expect("bound address").port();
+        NonZeroU16::new(port).expect("the OS never assigns port 0")
+    }
+
+    fn terminate(child: &Child) {
+        let pid = Pid::from_raw(i32::try_from(child.id()).expect("PIDs fit in i32"));
+        kill(pid, Signal::SIGTERM).expect("SIGTERM sent");
+    }
+
+    fn exit_status_within(child: &mut Child, timeout: Duration) -> ExitStatus {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = child.try_wait().expect("child status") {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "still running after {timeout:?}");
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    fn run_downloads_stops_on_sigterm_and_resumes() {
+        // Drives the seeder in the background while the test blocks on the CLI process.
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let port = free_port();
+        let root = root_with(|settings| settings.connection.listen_port = port);
+        let seed_dir = tempfile::tempdir().expect("temp dir");
+        let (content, torrent) = runtime.block_on(payload_torrent(seed_dir.path()));
+        let file = root.path().join("payload.torrent");
+        fs::write(&file, torrent.as_bytes().expect("torrent serialises")).expect("torrent written");
+        let id = add_running(root.path(), &file);
+        let running = format!("{id}\trunning");
+
+        let (mut run, mut lines) = spawn_run(root.path());
+        wait_for_snapshot(&mut lines, &running);
+        let peer = SocketAddr::from((Ipv4Addr::LOCALHOST, port.get()));
+        let _seeder = runtime.block_on(seed(seed_dir.path(), &torrent, peer));
+        let downloaded = root.path().join("downloads").join(PAYLOAD_NAME);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while fs::read(&downloaded).ok().as_ref() != Some(&content) {
+            assert!(Instant::now() < deadline, "not downloaded within 60 s");
+            thread::sleep(Duration::from_millis(100));
+        }
+        terminate(&run);
+        assert!(exit_status_within(&mut run, Duration::from_secs(10)).success());
+
+        // Stopping pauses torrents in the engine only, so they come back running.
+        let (mut run, mut lines) = spawn_run(root.path());
+        wait_for_snapshot(&mut lines, &running);
+        terminate(&run);
+        assert!(exit_status_within(&mut run, Duration::from_secs(10)).success());
+    }
 }

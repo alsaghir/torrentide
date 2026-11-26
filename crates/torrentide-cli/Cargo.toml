@@ -21,6 +21,10 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+torrentide-testkit.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { workspace = true, features = ["signal"] }
 
 [lints]
 workspace = true

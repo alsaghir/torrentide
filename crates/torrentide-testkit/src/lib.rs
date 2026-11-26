@@ -1,10 +1,10 @@
-//! Isolated librqbit sessions and a generated payload for integration and end-to-end tests.
+//! Isolated librqbit sessions, a generated payload and a seeder for integration and end-to-end tests.
 
-use std::{path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use librqbit::{
-    CreateTorrentOptions, CreateTorrentResult, ListenerOptions, Session, SessionOptions,
-    create_torrent, spawn_utils::BlockingSpawner,
+    AddTorrent, AddTorrentOptions, CreateTorrentOptions, CreateTorrentResult, ListenerOptions,
+    Session, SessionOptions, create_torrent, spawn_utils::BlockingSpawner,
 };
 
 const PIECE_LENGTH: u32 = 32 * 1024;
@@ -53,4 +53,35 @@ pub async fn payload_torrent(dir: &Path) -> (Vec<u8>, CreateTorrentResult) {
     .await
     .unwrap();
     (content, torrent)
+}
+
+/// Seeds `torrent`, whose data is already in its output folder, to `peer`; the seeder dials out
+/// and does not listen.
+///
+/// Returns once the torrent is added; it reaches `peer` after its hash check passes.
+///
+/// # Panics
+///
+/// If the session cannot start or the torrent cannot be added.
+pub async fn seed(dir: &Path, torrent: &CreateTorrentResult, peer: SocketAddr) -> Arc<Session> {
+    let session = isolated_session(dir, None).await;
+    session
+        .add_torrent(
+            AddTorrent::from_bytes(torrent.as_bytes().expect("torrent serialises")),
+            Some(AddTorrentOptions {
+                output_folder: Some(
+                    torrent
+                        .output_folder
+                        .to_str()
+                        .expect("UTF-8 output folder")
+                        .to_owned(),
+                ),
+                overwrite: true,
+                initial_peers: Some(vec![peer]),
+                ..AddTorrentOptions::default()
+            }),
+        )
+        .await
+        .expect("seeding starts");
+    session
 }
