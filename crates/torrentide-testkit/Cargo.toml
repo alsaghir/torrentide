@@ -1,0 +1,18 @@
+[package]
+name = "torrentide-testkit"
+description = "Test fixtures for the Torrentide BitTorrent client: isolated librqbit sessions and payloads"
+keywords = ["bittorrent", "torrent", "testing"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+librqbit.workspace = true
+
+[lints]
+workspace = true

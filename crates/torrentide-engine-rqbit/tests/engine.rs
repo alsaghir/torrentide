@@ -1,15 +1,13 @@
 //! `RqbitEngine` against an isolated session: no network, the payload is already on disk.
 
-mod common;
-
 use std::{fs, path::Path, time::Duration};
 
-use common::{PAYLOAD_NAME, isolated_session, payload_torrent};
 use torrentide_core::{
     AddOptions, AddSource, Engine, EngineError, Paths, RemoveMode, Settings, TorrentId,
     TorrentState, TorrentStatus,
 };
 use torrentide_engine_rqbit::RqbitEngine;
+use torrentide_testkit::{PAYLOAD_NAME, isolated_session, payload_torrent};
 
 struct Fixture {
     engine: RqbitEngine,

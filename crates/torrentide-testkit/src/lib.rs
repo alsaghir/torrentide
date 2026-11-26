@@ -1,4 +1,4 @@
-//! Isolated librqbit sessions and a generated payload, shared by the integration tests.
+//! Isolated librqbit sessions and a generated payload for integration and end-to-end tests.
 
 use std::{path::Path, sync::Arc};
 
@@ -13,6 +13,10 @@ const PAYLOAD_LENGTH: usize = 10 * PIECE_LENGTH as usize + 123;
 pub const PAYLOAD_NAME: &str = "payload.bin";
 
 /// A session with no DHT, LSD or listener unless given: it reaches only peers it is told about.
+///
+/// # Panics
+///
+/// If the session cannot start.
 pub async fn isolated_session(dir: &Path, listen: Option<ListenerOptions>) -> Arc<Session> {
     Session::new_with_opts(
         dir.to_owned(),
@@ -28,6 +32,10 @@ pub async fn isolated_session(dir: &Path, listen: Option<ListenerOptions>) -> Ar
 }
 
 /// Writes [`PAYLOAD_NAME`] into `dir` and returns its content and a torrent for it.
+///
+/// # Panics
+///
+/// If the file cannot be written or the torrent cannot be created.
 pub async fn payload_torrent(dir: &Path) -> (Vec<u8>, CreateTorrentResult) {
     let content: Vec<u8> = (0..PAYLOAD_LENGTH)
         .map(|i| u8::try_from(i % 251).unwrap())

@@ -1,12 +1,10 @@
 //! Downloads a torrent from an in-process seeder over loopback: no DHT, tracker or LSD.
 
-mod common;
-
 use std::{net::Ipv4Addr, path::Path, time::Duration};
 
-use common::{PAYLOAD_NAME, isolated_session, payload_torrent};
 use librqbit::{AddTorrent, AddTorrentOptions, ListenerOptions};
 use torrentide_engine_rqbit::download;
+use torrentide_testkit::{PAYLOAD_NAME, isolated_session, payload_torrent};
 
 fn folder(path: &Path) -> String {
     path.to_str().expect("temp paths are UTF-8").to_owned()

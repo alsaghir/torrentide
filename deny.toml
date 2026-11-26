@@ -46,7 +46,7 @@ allow-wildcard-paths = true
 # the banned crate directly, so the rules also hold transitively. Each rule is added together
 # with the crate it constrains.
 deny = [
-    { crate = "librqbit", wrappers = ["torrentide-engine-rqbit"], reason = "only the engine adapter uses librqbit; everything else goes through torrentide-core's Engine trait" },
+    { crate = "librqbit", wrappers = ["torrentide-engine-rqbit", "torrentide-testkit"], reason = "only the engine adapter uses librqbit, and the testkit for test peers; everything else goes through torrentide-core's Engine trait" },
     { crate = "rusqlite", wrappers = ["torrentide-core"], reason = "one crate owns the database; everything else goes through its API" },
 ]
 

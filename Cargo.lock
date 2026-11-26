@@ -3236,6 +3236,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "torrentide-core",
+ "torrentide-testkit",
+]
+
+[[package]]
+name = "torrentide-testkit"
+version = "0.0.0"
+dependencies = [
+ "librqbit",
 ]
 
 [[package]]
