@@ -120,7 +120,7 @@ async fn start_client(paths: &Paths) -> Result<ClientHandle<RqbitEngine>, StartE
 }
 
 fn start_window(client: &ClientHandle<RqbitEngine>) -> Result<Rc<Window>, RunError> {
-    let window = Rc::new(Window::new(columns::builtin())?);
+    let window = Window::new(columns::builtin())?;
     window.follow(client.snapshot())?;
     Ok(window)
 }

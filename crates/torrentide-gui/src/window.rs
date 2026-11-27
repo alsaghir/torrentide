@@ -1,9 +1,9 @@
 //! Adapts the column registry and torrent snapshots to the Slint table.
 
-use std::cell::RefCell;
+use std::cell::{Cell as ValueCell, RefCell};
 use std::collections::HashMap;
 use std::fmt::{self, Write as _};
-use std::rc::Rc;
+use std::rc::{Rc, Weak as RcWeak};
 
 use slint::{ComponentHandle, EventLoopError, Model, ModelRc, PlatformError, VecModel, Weak};
 use tokio::sync::watch;
@@ -57,7 +57,7 @@ impl Closer {
 pub struct Window {
     component: MainWindow,
     columns: Vec<Column>,
-    sort: Sort,
+    sort: ValueCell<Sort>,
     rows: Rc<VecModel<TorrentRow>>,
     shown: RefCell<Vec<ShownRow>>,
     snapshots: RefCell<Option<watch::Receiver<Vec<Torrent>>>>,
@@ -79,26 +79,69 @@ impl fmt::Debug for Window {
 }
 
 impl Window {
-    /// Creates a window with the registry's default columns and no torrents.
+    /// Creates a shared window with the registry's default columns and no torrents.
     ///
     /// # Errors
     ///
     /// Returns [`RunError`] if the window system cannot create the window.
-    pub fn new(columns: Vec<Column>) -> Result<Self, RunError> {
+    pub fn new(columns: Vec<Column>) -> Result<Rc<Self>, RunError> {
         let component = MainWindow::new()?;
         let layout = TableLayout::new(&columns);
         let (specs, columns) = visible_columns(columns, &layout);
         component.set_columns(ModelRc::from(Rc::new(VecModel::from(specs))));
         let rows = Rc::new(VecModel::default());
         component.set_rows(ModelRc::from(Rc::clone(&rows)));
-        Ok(Self {
-            component,
-            columns,
-            sort: layout.sort,
-            rows,
-            shown: RefCell::default(),
-            snapshots: RefCell::default(),
-        })
+        let window = Rc::new_cyclic(|window: &RcWeak<Self>| {
+            let window = RcWeak::clone(window);
+            component.on_sort_clicked(move |id| {
+                if let Some(window) = window.upgrade() {
+                    window.sort_clicked(id.as_str());
+                }
+            });
+            Self {
+                component,
+                columns,
+                sort: ValueCell::new(layout.sort),
+                rows,
+                shown: RefCell::default(),
+                snapshots: RefCell::default(),
+            }
+        });
+        window.update_sort_header();
+        Ok(window)
+    }
+
+    fn sort_clicked(&self, id: &str) {
+        let Some(column) = self.columns.iter().find(|column| column.id.as_str() == id) else {
+            return;
+        };
+        let current = self.sort.get();
+        let direction = if column.id == current.column && current.direction == Direction::Ascending
+        {
+            Direction::Descending
+        } else {
+            Direction::Ascending
+        };
+        self.sort.set(Sort {
+            column: column.id,
+            direction,
+        });
+        self.update_sort_header();
+
+        let torrents: Vec<_> = self
+            .shown
+            .borrow()
+            .iter()
+            .map(|row| row.torrent.clone())
+            .collect();
+        self.show_torrents(&torrents);
+    }
+
+    fn update_sort_header(&self) {
+        let sort = self.sort.get();
+        self.component.set_sort_column(sort.column.as_str().into());
+        self.component
+            .set_sort_ascending(sort.direction == Direction::Ascending);
     }
 
     /// Returns a handle for closing this window from another thread.
@@ -118,7 +161,7 @@ impl Window {
             .collect()
     }
 
-    /// Displays torrents in layout sort order, updating only cells whose display changes.
+    /// Displays torrents in the current sort order, updating only cells whose display changes.
     ///
     /// Keeps snapshot order for equal keys or if the sort column is not visible.
     pub fn show_torrents(&self, torrents: &[Torrent]) {
@@ -166,11 +209,8 @@ impl Window {
     }
 
     fn sorted<'a>(&self, torrents: &'a [Torrent]) -> Vec<&'a Torrent> {
-        let Some(column) = self
-            .columns
-            .iter()
-            .find(|column| column.id == self.sort.column)
-        else {
+        let sort = self.sort.get();
+        let Some(column) = self.columns.iter().find(|column| column.id == sort.column) else {
             return torrents.iter().collect();
         };
         // One key per torrent: extractors may allocate, so they stay out of the comparator.
@@ -180,7 +220,7 @@ impl Window {
             .collect();
         keyed.sort_by(|(left, _), (right, _)| {
             let ordering = left.compare(right);
-            match self.sort.direction {
+            match sort.direction {
                 Direction::Ascending => ordering,
                 Direction::Descending => ordering.reverse(),
             }
@@ -287,24 +327,40 @@ fn make_cell(text: &str, fraction: f32) -> Cell {
 
 #[cfg(test)]
 mod tests {
-    use i_slint_backend_testing::{AccessibleRole, ElementQuery};
+    use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
     use slint::SharedString;
+    use slint::platform::PointerEventButton;
     use torrentide_core::{TorrentId, TorrentState, TorrentStatus};
 
     use super::*;
     use crate::columns::{self, ColumnId, ColumnLayout};
 
-    fn window(columns: Vec<Column>) -> Window {
+    fn window(columns: Vec<Column>) -> Rc<Window> {
         i_slint_backend_testing::init_no_event_loop();
         Window::new(columns).expect("create the window with the testing backend")
     }
 
-    fn headers(window: &Window) -> Vec<SharedString> {
+    fn show(window: &Window) {
         window
             .component
             .show()
             .expect("lay out the window before querying it");
+    }
 
+    fn header(window: &Window, label: &str) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(&window.component, label)
+            .next()
+            .expect("column header has the requested accessible label")
+    }
+
+    fn sort_state(header: &ElementHandle) -> SharedString {
+        header
+            .accessible_description()
+            .expect("column header is still in the window")
+    }
+
+    fn headers(window: &Window) -> Vec<SharedString> {
+        show(window);
         let mut headers = ElementQuery::from_root(&window.component)
             .match_accessible_role(AccessibleRole::Button)
             .find_all();
@@ -345,6 +401,22 @@ mod tests {
             .get_rows()
             .row_data(index)
             .expect("the row is present in the window model")
+    }
+
+    fn names(window: &Window) -> Vec<String> {
+        window
+            .cell_texts()
+            .into_iter()
+            .map(|mut row| row.remove(0))
+            .collect()
+    }
+
+    fn varied_sizes() -> [Torrent; 3] {
+        let mut largest = torrent("Alpha");
+        largest.status.size = 10 * 1024;
+        let mut smallest = torrent("Bravo");
+        smallest.status.size = 1024;
+        [torrent("Charlie"), largest, smallest]
     }
 
     #[test]
@@ -430,12 +502,46 @@ mod tests {
     }
 
     #[test]
-    fn window_sorts_names_case_insensitively() {
+    fn window_defaults_to_name_ascending_case_insensitively() {
         let window = window(columns::builtin());
         window.show_torrents(&[torrent("beta"), torrent("Alpha"), torrent("gamma")]);
-        let texts = window.cell_texts();
-        let names: Vec<_> = texts.iter().map(|row| row[0].as_str()).collect();
-        assert_eq!(names, ["Alpha", "beta", "gamma"]);
+        show(&window);
+        assert_eq!(names(&window), ["Alpha", "beta", "gamma"]);
+        assert_eq!(sort_state(&header(&window, "Name")), "Sorted ascending");
+    }
+
+    #[test]
+    fn clicking_size_then_clicking_again_reverses_size_order() {
+        let window = window(columns::builtin());
+        window.show_torrents(&varied_sizes());
+        show(&window);
+
+        header(&window, "Size").mock_single_click(PointerEventButton::Left);
+        assert_eq!(names(&window), ["Bravo", "Charlie", "Alpha"]);
+        let size = header(&window, "Size");
+        assert_eq!(sort_state(&size), "Sorted ascending");
+        assert_eq!(sort_state(&header(&window, "Name")), "");
+
+        size.invoke_accessible_default_action();
+        assert_eq!(names(&window), ["Alpha", "Charlie", "Bravo"]);
+        assert_eq!(sort_state(&header(&window, "Size")), "Sorted descending");
+    }
+
+    #[test]
+    fn changing_columns_after_descending_sort_starts_ascending() {
+        let window = window(columns::builtin());
+        window.show_torrents(&varied_sizes());
+        show(&window);
+
+        let name = header(&window, "Name");
+        name.invoke_accessible_default_action();
+        assert_eq!(names(&window), ["Charlie", "Bravo", "Alpha"]);
+        assert_eq!(sort_state(&name), "Sorted descending");
+
+        let size = header(&window, "Size");
+        size.invoke_accessible_default_action();
+        assert_eq!(sort_state(&size), "Sorted ascending");
+        assert_eq!(names(&window), ["Bravo", "Charlie", "Alpha"]);
     }
 
     #[test]
@@ -454,7 +560,7 @@ mod tests {
     #[test]
     fn window_follows_snapshot_updates() {
         i_slint_backend_testing::init_integration_test_with_mock_time();
-        let window = Rc::new(Window::new(columns::builtin()).unwrap());
+        let window = Window::new(columns::builtin()).unwrap();
         let (publisher, snapshots) = watch::channel(vec![torrent("Initial")]);
         window.follow(snapshots).unwrap();
         assert_eq!(window.cell_texts()[0][0], "Initial");

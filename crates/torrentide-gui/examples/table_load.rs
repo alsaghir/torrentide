@@ -102,7 +102,7 @@ fn cpu_seconds() -> f64 {
 }
 
 fn main() -> Result<(), RunError> {
-    let window = Rc::new(Window::new(columns::builtin())?);
+    let window = Window::new(columns::builtin())?;
     let mut seed = 0x9E37_79B9_7F4A_7C15;
     let mut torrents: Vec<_> = (0..ROWS).map(|id| torrent(id, &mut seed)).collect();
     let mut indices: Vec<_> = (0..ROWS).collect();
