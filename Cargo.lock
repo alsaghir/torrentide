@@ -6585,11 +6585,14 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 name = "torrentide"
 version = "0.0.0"
 dependencies = [
+ "i-slint-backend-testing",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "torrentide-core",
  "torrentide-engine-rqbit",
  "torrentide-gui",
+ "torrentide-testkit",
  "tracing",
 ]
 

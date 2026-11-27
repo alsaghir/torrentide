@@ -21,3 +21,10 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+torrentide-gui = { workspace = true, features = ["testing"] }
+i-slint-backend-testing.workspace = true
+torrentide-testkit.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }

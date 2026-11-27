@@ -4,7 +4,7 @@ pub mod columns;
 
 mod window;
 
-pub use window::{RunError, Window};
+pub use window::{CloseError, Closer, RunError, Window};
 
 #[allow(
     trivial_numeric_casts,

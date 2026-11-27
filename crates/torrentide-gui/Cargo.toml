@@ -25,3 +25,6 @@ i-slint-backend-testing.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+testing = []

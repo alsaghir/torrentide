@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Write as _};
 use std::rc::Rc;
 
-use slint::{ComponentHandle, EventLoopError, Model, ModelRc, PlatformError, VecModel};
+use slint::{ComponentHandle, EventLoopError, Model, ModelRc, PlatformError, VecModel, Weak};
 use tokio::sync::watch;
 use torrentide_core::Torrent;
 
@@ -23,6 +23,36 @@ pub enum RunError {
     Follow(#[from] EventLoopError),
 }
 
+/// The request to close the window could not be queued.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot reach the window's event loop")]
+pub struct CloseError(#[from] EventLoopError);
+
+/// A handle that can request the window to close from any thread.
+#[derive(Clone)]
+pub struct Closer(Weak<MainWindow>);
+
+impl fmt::Debug for Closer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Closer").finish_non_exhaustive()
+    }
+}
+
+impl Closer {
+    /// Requests that the window close, doing nothing if it has been dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CloseError`] if the event loop cannot accept the request.
+    pub fn close(&self) -> Result<(), CloseError> {
+        self.0.upgrade_in_event_loop(|component| {
+            // Slint releases the window's keepalive even on a hide error, and run retries the hide.
+            let _ = component.hide();
+        })?;
+        Ok(())
+    }
+}
+
 /// Displays torrent snapshots in a single-threaded Slint window.
 pub struct Window {
     component: MainWindow,
@@ -30,6 +60,7 @@ pub struct Window {
     sort: Sort,
     rows: Rc<VecModel<TorrentRow>>,
     shown: RefCell<Vec<ShownRow>>,
+    snapshots: RefCell<Option<watch::Receiver<Vec<Torrent>>>>,
 }
 
 /// The torrent a row last displayed, so an unchanged torrent skips formatting entirely.
@@ -66,7 +97,25 @@ impl Window {
             sort: layout.sort,
             rows,
             shown: RefCell::default(),
+            snapshots: RefCell::default(),
         })
+    }
+
+    /// Returns a handle for closing this window from another thread.
+    #[must_use]
+    pub fn closer(&self) -> Closer {
+        Closer(self.component.as_weak())
+    }
+
+    /// Returns the displayed cell texts in row and visible column order.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn cell_texts(&self) -> Vec<Vec<String>> {
+        self.component
+            .get_rows()
+            .iter()
+            .map(|row| row.cells.iter().map(|cell| cell.text.to_string()).collect())
+            .collect()
     }
 
     /// Displays torrents in layout sort order, updating only cells whose display changes.
@@ -153,6 +202,7 @@ impl Window {
         // Release the channel's read lock before touching Slint so publishers aren't blocked.
         let snapshot = snapshots.borrow_and_update().clone();
         self.show_torrents(&snapshot);
+        let latest = snapshots.clone();
         let window = Rc::downgrade(self);
         slint::spawn_local(async move {
             while snapshots.changed().await.is_ok() {
@@ -163,6 +213,7 @@ impl Window {
                 window.show_torrents(&snapshot);
             }
         })?;
+        self.snapshots.replace(Some(latest));
         Ok(())
     }
 
@@ -173,6 +224,11 @@ impl Window {
     /// Returns [`RunError`] if showing the window or running its event loop fails.
     pub fn run(&self) -> Result<(), RunError> {
         self.component.run()?;
+        // A watch receiver on another thread can request close before the follow task runs.
+        if let Some(snapshots) = self.snapshots.borrow().as_ref() {
+            let snapshot = snapshots.borrow().clone();
+            self.show_torrents(&snapshot);
+        }
         Ok(())
     }
 }
@@ -348,10 +404,9 @@ mod tests {
         complete.status.done = 4096;
         window.show_torrents(&[torrent("In progress"), complete]);
 
-        let first = displayed_row(&window, 0).cells;
-        let second = displayed_row(&window, 1).cells;
+        let texts = window.cell_texts();
         assert_eq!(
-            second.iter().map(|cell| cell.text).collect::<Vec<_>>(),
+            texts[1],
             [
                 "In progress",
                 "2.0 KiB",
@@ -362,9 +417,14 @@ mod tests {
                 "Downloading"
             ]
         );
-        assert_eq!(first.row_data(0).expect("name").text, "Complete");
+        assert_eq!(texts[0][0], "Complete");
         assert_eq!(
-            first.row_data(2).expect("progress").fraction.to_bits(),
+            displayed_row(&window, 0)
+                .cells
+                .row_data(2)
+                .expect("progress")
+                .fraction
+                .to_bits(),
             1.0_f32.to_bits()
         );
     }
@@ -373,15 +433,8 @@ mod tests {
     fn window_sorts_names_case_insensitively() {
         let window = window(columns::builtin());
         window.show_torrents(&[torrent("beta"), torrent("Alpha"), torrent("gamma")]);
-        let names: Vec<_> = (0..3)
-            .map(|index| {
-                displayed_row(&window, index)
-                    .cells
-                    .row_data(0)
-                    .unwrap()
-                    .text
-            })
-            .collect();
+        let texts = window.cell_texts();
+        let names: Vec<_> = texts.iter().map(|row| row[0].as_str()).collect();
         assert_eq!(names, ["Alpha", "beta", "gamma"]);
     }
 
@@ -393,14 +446,9 @@ mod tests {
         let mut larger = torrent("beta");
         larger.status.size = 3072;
         window.show_torrents(&[larger, torrent("Alpha")]);
-        assert_eq!(
-            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
-            "3.0 KiB"
-        );
-        assert_eq!(
-            displayed_row(&window, 1).cells.row_data(0).unwrap().text,
-            "2.0 KiB"
-        );
+        let texts = window.cell_texts();
+        assert_eq!(texts[0][0], "3.0 KiB");
+        assert_eq!(texts[1][0], "2.0 KiB");
     }
 
     #[test]
@@ -409,10 +457,7 @@ mod tests {
         let window = Rc::new(Window::new(columns::builtin()).unwrap());
         let (publisher, snapshots) = watch::channel(vec![torrent("Initial")]);
         window.follow(snapshots).unwrap();
-        assert_eq!(
-            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
-            "Initial"
-        );
+        assert_eq!(window.cell_texts()[0][0], "Initial");
 
         // Poll the task once to register its watch waker before publishing the next snapshot.
         slint::quit_event_loop().unwrap();
@@ -421,10 +466,27 @@ mod tests {
         drop(publisher);
         slint::quit_event_loop().unwrap();
         slint::run_event_loop().unwrap();
-        assert_eq!(
-            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
-            "Updated"
-        );
+        assert_eq!(window.cell_texts()[0][0], "Updated");
+    }
+
+    #[test]
+    fn closer_ends_the_window_loop_from_another_thread() {
+        i_slint_backend_testing::init_integration_test_with_system_time();
+        let window = Window::new(columns::builtin()).unwrap();
+        let closer = window.closer();
+        let timed_out = Rc::new(std::cell::Cell::new(false));
+        let watchdog = Rc::clone(&timed_out);
+        slint::Timer::single_shot(std::time::Duration::from_secs(5), move || {
+            watchdog.set(true);
+            slint::quit_event_loop().unwrap();
+        });
+
+        std::thread::spawn(move || closer.close())
+            .join()
+            .expect("close thread did not panic")
+            .expect("close request was queued");
+        window.run().unwrap();
+        assert!(!timed_out.get(), "close request did not end the event loop");
     }
 
     #[test]
