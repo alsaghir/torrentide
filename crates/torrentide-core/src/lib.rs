@@ -2,6 +2,7 @@
 
 mod client;
 mod database;
+pub mod logging;
 mod paths;
 mod reconcile;
 mod settings;
