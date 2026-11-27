@@ -8,7 +8,7 @@ mod settings;
 
 use std::{fmt, path::PathBuf};
 
-pub use client::{ClientError, ClientHandle};
+pub use client::{ClientError, ClientHandle, Torrent};
 pub use database::{Database, DatabaseError, TorrentRecord};
 pub use paths::{APP_NAME, HomeNotFound, Paths};
 pub use reconcile::{Reconciled, reconcile};
@@ -104,6 +104,9 @@ pub struct TorrentStatus {
     pub download_rate: u64,
     /// Upload rate in bytes per second; zero unless running.
     pub upload_rate: u64,
+    /// Bytes uploaded since the engine last started this torrent.
+    /// Resets to zero when it stops (including on pause or restart).
+    pub session_uploaded: u64,
 }
 
 #[derive(Debug, thiserror::Error)]

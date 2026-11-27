@@ -12,8 +12,8 @@ use clap::{Parser, Subcommand};
 use tokio::sync::watch;
 use torrentide_core::{
     AddOptions, AddSource, ClientError, ClientHandle, Database, DatabaseError, EngineError,
-    HomeNotFound, LoadedSettings, Paths, Settings, SettingsFile, SettingsFileError, TorrentState,
-    TorrentStatus,
+    HomeNotFound, LoadedSettings, Paths, Settings, SettingsFile, SettingsFileError, Torrent,
+    TorrentState,
 };
 use torrentide_engine_rqbit::RqbitEngine;
 
@@ -173,7 +173,7 @@ async fn run_client(paths: &Paths) -> Result<(), CliError> {
 
 /// Prints the snapshot, then again on every change, until `stop` resolves or the client ends.
 async fn print_changes(
-    mut snapshot: watch::Receiver<Vec<TorrentStatus>>,
+    mut snapshot: watch::Receiver<Vec<Torrent>>,
     stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let mut stop = pin!(stop);
@@ -193,10 +193,11 @@ async fn print_changes(
     }
 }
 
-fn print_torrents(torrents: &[TorrentStatus]) -> io::Result<()> {
+fn print_torrents(torrents: &[Torrent]) -> io::Result<()> {
     let mut out = io::stdout().lock();
     for torrent in torrents {
-        writeln!(out, "{}\t{}", torrent.id, state(&torrent.state))?;
+        let status = &torrent.status;
+        writeln!(out, "{}\t{}", status.id, state(&status.state))?;
     }
     writeln!(out)
 }

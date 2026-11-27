@@ -49,6 +49,7 @@ impl Engine for FixedEngine {
                 done: 0,
                 download_rate: 0,
                 upload_rate: 0,
+                session_uploaded: 0,
             })
             .collect()
     }
@@ -107,12 +108,14 @@ fn engine_torrents_without_a_row_are_queued_last() {
                 queue_position: 1,
                 added_at: 500,
                 completed_at: None,
+                uploaded: 0,
             },
             TorrentRecord {
                 id: id(3),
                 queue_position: 2,
                 added_at: 500,
                 completed_at: None,
+                uploaded: 0,
             },
         ]
     );

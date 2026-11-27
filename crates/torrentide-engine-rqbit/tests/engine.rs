@@ -175,6 +175,7 @@ async fn snapshot_reports_name_size_and_progress() {
     let paused = status(&fixture.engine, id).expect("paused torrent in snapshot");
     assert_eq!(paused.download_rate, 0);
     assert_eq!(paused.upload_rate, 0);
+    assert_eq!(paused.session_uploaded, 0);
 }
 
 #[tokio::test]

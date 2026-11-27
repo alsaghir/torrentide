@@ -106,6 +106,7 @@ fn status(torrent: &ManagedTorrent) -> TorrentStatus {
             .live
             .as_ref()
             .map_or(0, |live| live.upload_speed.as_bytes()),
+        session_uploaded: stats.uploaded_bytes,
         state: torrent_state(stats),
     }
 }

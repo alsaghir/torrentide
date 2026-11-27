@@ -10,7 +10,7 @@ use std::{
 use tokio::time::{self, Instant};
 use torrentide_core::{
     AddOptions, AddSource, ClientError, ClientHandle, Database, Engine, EngineError, Paths,
-    RemoveMode, TorrentId, TorrentState, TorrentStatus,
+    RemoveMode, Torrent, TorrentId, TorrentState, TorrentStatus,
 };
 
 const TICK: Duration = Duration::from_secs(1);
@@ -22,6 +22,7 @@ type Torrents = Arc<Mutex<Vec<TorrentStatus>>>;
 /// An engine over a list the test can also change directly.
 ///
 // A torrent file is one byte `b`; its id is `b` repeated. Adding to [`UNWRITABLE`] fails.
+#[derive(Clone)]
 struct SharedEngine(Torrents);
 
 impl SharedEngine {
@@ -30,10 +31,23 @@ impl SharedEngine {
         ready(match torrents.iter_mut().find(|torrent| torrent.id == id) {
             Some(torrent) => {
                 torrent.state = state;
+                if torrent.state == TorrentState::Paused {
+                    torrent.session_uploaded = 0;
+                }
                 Ok(())
             }
             None => Err(EngineError::UnknownTorrent(id)),
         })
+    }
+
+    fn set_session_uploaded(&self, id: TorrentId, uploaded: u64) {
+        self.0
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|torrent| torrent.id == id)
+            .expect("torrent is in the fake engine")
+            .session_uploaded = uploaded;
     }
 }
 
@@ -113,6 +127,14 @@ fn status_for(id: TorrentId, state: TorrentState) -> TorrentStatus {
         done: 0,
         download_rate: 0,
         upload_rate: 0,
+        session_uploaded: 0,
+    }
+}
+
+fn torrent(byte: u8, state: TorrentState) -> Torrent {
+    Torrent {
+        status: status(byte, state),
+        uploaded: 0,
     }
 }
 
@@ -128,7 +150,7 @@ fn options(save_path: &str) -> AddOptions {
 }
 
 struct Fixture {
-    torrents: Torrents,
+    engine: SharedEngine,
     client: ClientHandle<SharedEngine>,
     paths: Paths,
     _root: tempfile::TempDir,
@@ -146,7 +168,7 @@ impl Fixture {
             .collect()
     }
 
-    fn published(&self) -> Vec<TorrentStatus> {
+    fn published(&self) -> Vec<Torrent> {
         self.client.snapshot().borrow().clone()
     }
 }
@@ -159,10 +181,10 @@ fn spawn_with_rows(torrents: Vec<TorrentStatus>, rows: &[TorrentId]) -> Fixture 
     for &row in rows {
         database.insert_torrent(row, 0).unwrap();
     }
-    let shared = Arc::new(Mutex::new(torrents));
-    let client = ClientHandle::spawn(SharedEngine(Arc::clone(&shared)), database, TICK).unwrap();
+    let engine = SharedEngine(Arc::new(Mutex::new(torrents)));
+    let client = ClientHandle::spawn(engine.clone(), database, TICK).unwrap();
     Fixture {
-        torrents: shared,
+        engine,
         client,
         paths,
         _root: root,
@@ -177,7 +199,7 @@ fn spawn(torrents: Vec<TorrentStatus>) -> Fixture {
 async fn the_snapshot_starts_with_the_engine_torrents() {
     let fixture = spawn(vec![status(1, TorrentState::Running)]);
 
-    assert_eq!(fixture.published(), vec![status(1, TorrentState::Running)]);
+    assert_eq!(fixture.published(), vec![torrent(1, TorrentState::Running)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -194,7 +216,8 @@ async fn a_changed_engine_list_is_published_on_the_next_tick() {
     let start = Instant::now();
 
     fixture
-        .torrents
+        .engine
+        .0
         .lock()
         .unwrap()
         .push(status(2, TorrentState::Running));
@@ -207,8 +230,8 @@ async fn a_changed_engine_list_is_published_on_the_next_tick() {
     assert_eq!(
         *snapshot.borrow(),
         vec![
-            status(1, TorrentState::Running),
-            status(2, TorrentState::Running)
+            torrent(1, TorrentState::Running),
+            torrent(2, TorrentState::Running)
         ]
     );
 }
@@ -236,7 +259,7 @@ async fn an_added_torrent_is_published_before_add_returns() {
 
     assert_eq!(added, id(1));
     assert_eq!(start.elapsed(), Duration::ZERO, "no tick was needed");
-    assert_eq!(fixture.published(), vec![status(1, TorrentState::Paused)]);
+    assert_eq!(fixture.published(), vec![torrent(1, TorrentState::Paused)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -274,7 +297,8 @@ async fn adding_a_torrent_the_engine_has_keeps_its_row() {
     let fixture = spawn(Vec::new());
     // Added behind the client's back, so it has no row yet.
     fixture
-        .torrents
+        .engine
+        .0
         .lock()
         .unwrap()
         .push(status(1, TorrentState::Running));
@@ -297,10 +321,10 @@ async fn pause_and_resume_are_published_before_they_return() {
     let fixture = spawn(vec![status(1, TorrentState::Running)]);
 
     fixture.client.pause(id(1)).await.unwrap();
-    assert_eq!(fixture.published(), vec![status(1, TorrentState::Paused)]);
+    assert_eq!(fixture.published(), vec![torrent(1, TorrentState::Paused)]);
 
     fixture.client.resume(id(1)).await.unwrap();
-    assert_eq!(fixture.published(), vec![status(1, TorrentState::Running)]);
+    assert_eq!(fixture.published(), vec![torrent(1, TorrentState::Running)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -316,7 +340,7 @@ async fn a_removed_torrent_is_gone_from_the_snapshot_when_remove_returns() {
         .await
         .unwrap();
 
-    assert_eq!(fixture.published(), vec![status(2, TorrentState::Running)]);
+    assert_eq!(fixture.published(), vec![torrent(2, TorrentState::Running)]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -354,4 +378,78 @@ async fn shutdown_returns_the_engine() {
     let engine = fixture.client.shutdown().await;
 
     assert_eq!(engine.snapshot(), vec![status(1, TorrentState::Running)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifetime_uploads_survive_an_engine_counter_reset_between_polls() {
+    let fixture = spawn(vec![status(1, TorrentState::Running)]);
+    let mut snapshot = fixture.client.snapshot();
+
+    for (session, lifetime) in [(100, 100), (30, 130)] {
+        fixture.engine.set_session_uploaded(id(1), session);
+        time::timeout(TICK * 2, snapshot.changed())
+            .await
+            .expect("published within two ticks")
+            .unwrap();
+        let torrents = snapshot.borrow();
+        assert_eq!(torrents[0].status.session_uploaded, session);
+        assert_eq!(torrents[0].uploaded, lifetime);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn pausing_keeps_uploads_made_since_the_last_poll() {
+    let fixture = spawn(vec![status(1, TorrentState::Running)]);
+    let start = Instant::now();
+
+    fixture.engine.set_session_uploaded(id(1), 100);
+    fixture.client.pause(id(1)).await.unwrap();
+    fixture.client.resume(id(1)).await.unwrap();
+
+    assert_eq!(start.elapsed(), Duration::ZERO, "no tick was needed");
+    let published = fixture.published();
+    assert_eq!(published[0].status.session_uploaded, 0);
+    assert_eq!(published[0].uploaded, 100);
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifetime_uploads_are_saved_while_the_client_runs() {
+    let fixture = spawn(vec![status(1, TorrentState::Running)]);
+    let database = Database::open(&fixture.paths).unwrap();
+    fixture.engine.set_session_uploaded(id(1), 100);
+
+    time::timeout(Duration::from_secs(62), async {
+        let mut checks = time::interval(TICK);
+        loop {
+            checks.tick().await;
+            if database.torrents().unwrap()[0].uploaded == 100 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("upload totals are saved without shutting down");
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifetime_uploads_survive_shutdown_and_reopening() {
+    let fixture = spawn(vec![status(1, TorrentState::Running)]);
+    let mut snapshot = fixture.client.snapshot();
+    fixture.engine.set_session_uploaded(id(1), 100);
+    time::timeout(TICK * 2, snapshot.changed())
+        .await
+        .expect("published within two ticks")
+        .unwrap();
+    let uploaded = snapshot.borrow()[0].uploaded;
+    assert_eq!(uploaded, 100);
+
+    let engine = fixture.client.shutdown().await;
+    engine.set_session_uploaded(id(1), 0);
+    let database = Database::open(&fixture.paths).unwrap();
+    let client = ClientHandle::spawn(engine, database, TICK).unwrap();
+
+    let snapshot = client.snapshot();
+    let torrents = snapshot.borrow();
+    assert_eq!(torrents[0].status.session_uploaded, 0);
+    assert_eq!(torrents[0].uploaded, uploaded);
 }

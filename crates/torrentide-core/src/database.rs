@@ -13,7 +13,8 @@ const FILE_NAME: &str = "torrentide.sqlite3";
 
 /// Schema migrations in order; applying migration `i` sets `PRAGMA user_version` to `i + 1`.
 /// Released migrations are never edited, only appended to.
-const MIGRATIONS: &[&str] = &["
+const MIGRATIONS: &[&str] = &[
+    "
     CREATE TABLE torrent (
       id             INTEGER PRIMARY KEY,
       info_hash      BLOB NOT NULL UNIQUE,
@@ -21,7 +22,9 @@ const MIGRATIONS: &[&str] = &["
       added_at       INTEGER NOT NULL,
       completed_at   INTEGER
     ) STRICT;
-"];
+",
+    "ALTER TABLE torrent ADD COLUMN uploaded INTEGER NOT NULL DEFAULT 0;",
+];
 
 /// Torrentide's data about one torrent.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +36,8 @@ pub struct TorrentRecord {
     pub added_at: i64,
     /// Unix time in seconds; `None` until the download completed.
     pub completed_at: Option<i64>,
+    /// Lifetime bytes uploaded as last saved.
+    pub uploaded: u64,
 }
 
 /// An open database with the current schema.
@@ -146,6 +151,35 @@ impl Database {
         Ok(changed > 0)
     }
 
+    /// Saves lifetime upload totals in one transaction, ignoring missing rows.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseError::Sqlite`] if a total exceeds SQLite's signed integer range or the
+    /// database cannot be written. No updates are committed on failure.
+    pub fn set_uploaded(
+        &mut self,
+        totals: impl IntoIterator<Item = (TorrentId, u64)>,
+    ) -> Result<(), DatabaseError> {
+        let path = &self.path;
+        let sqlite = |source| DatabaseError::Sqlite {
+            path: path.clone(),
+            source,
+        };
+        let transaction = self.connection.transaction().map_err(sqlite)?;
+        {
+            let mut statement = transaction
+                .prepare("UPDATE torrent SET uploaded = ?1 WHERE info_hash = ?2")
+                .map_err(sqlite)?;
+            for (id, uploaded) in totals {
+                statement
+                    .execute(rusqlite::params![uploaded, id.info_hash()])
+                    .map_err(sqlite)?;
+            }
+        }
+        transaction.commit().map_err(sqlite)
+    }
+
     /// All torrent rows, ordered by queue position (ascending).
     ///
     /// # Errors
@@ -155,7 +189,7 @@ impl Database {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT info_hash, queue_position, added_at, completed_at \
+                "SELECT info_hash, queue_position, added_at, completed_at, uploaded \
                  FROM torrent ORDER BY queue_position",
             )
             .map_err(self.sqlite())?;
@@ -167,6 +201,7 @@ impl Database {
                     queue_position: row.get(1)?,
                     added_at: row.get(2)?,
                     completed_at: row.get(3)?,
+                    uploaded: row.get(4)?,
                 })
             })
             .map_err(self.sqlite())?;
