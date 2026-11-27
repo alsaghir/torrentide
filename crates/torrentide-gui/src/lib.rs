@@ -2,7 +2,9 @@
 
 pub mod columns;
 
-use slint::{ComponentHandle, PlatformError};
+mod window;
+
+pub use window::{RunError, Window};
 
 #[allow(
     trivial_numeric_casts,
@@ -13,59 +15,4 @@ use slint::{ComponentHandle, PlatformError};
 )]
 mod fluent {
     include!(concat!(env!("OUT_DIR"), "/fluent.rs"));
-}
-
-/// The window system could not be started or failed while running.
-#[derive(Debug, thiserror::Error)]
-#[error("the window system failed")]
-pub struct RunError(#[from] PlatformError);
-
-/// Opens the Torrentide window and runs its event loop.
-///
-/// # Errors
-///
-/// Returns [`RunError`] if the window system cannot start or the event loop fails.
-pub fn run() -> Result<(), RunError> {
-    let window = fluent::MainWindow::new()?;
-    window.run()?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use i_slint_backend_testing::{AccessibleRole, ElementQuery};
-    use slint::ComponentHandle;
-
-    use super::fluent::MainWindow;
-
-    #[test]
-    fn window_shows_column_headers_in_order() {
-        i_slint_backend_testing::init_no_event_loop();
-        let window = MainWindow::new().expect("create the window with the testing backend");
-        window
-            .show()
-            .expect("lay out the window before querying it");
-
-        let mut headers = ElementQuery::from_root(&window)
-            .match_accessible_role(AccessibleRole::Button)
-            .find_all();
-        headers.sort_by(|left, right| {
-            left.absolute_position()
-                .x
-                .total_cmp(&right.absolute_position().x)
-        });
-        let labels: Vec<_> = headers
-            .iter()
-            .map(|header| {
-                header
-                    .accessible_label()
-                    .expect("column header has a label")
-            })
-            .collect();
-        assert_eq!(
-            labels,
-            ["Name", "Size", "Progress", "Down", "Up", "Ratio", "State"],
-            "column headers should appear in left-to-right order"
-        );
-    }
 }

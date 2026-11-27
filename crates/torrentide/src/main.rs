@@ -2,8 +2,10 @@
 
 use std::process::ExitCode;
 
+use torrentide_gui::{Window, columns};
+
 fn main() -> ExitCode {
-    match torrentide_gui::run() {
+    match Window::new(columns::builtin()).and_then(|window| window.run()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("torrentide: {}", torrentide_core::error_chain(&error));

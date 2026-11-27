@@ -39,7 +39,6 @@ fn builtin_columns_have_distinct_keys_and_match_header_order() {
         .map(|column| {
             (
                 column.id.as_str(),
-                column.title,
                 column.align,
                 column.kind,
                 column.min_width,
@@ -49,13 +48,13 @@ fn builtin_columns_have_distinct_keys_and_match_header_order() {
     assert_eq!(
         metadata,
         [
-            ("name", "Name", Start, Text, 80),
-            ("size", "Size", End, Text, 50),
-            ("progress", "Progress", Start, Progress, 60),
-            ("download_rate", "Down", End, Text, 50),
-            ("upload_rate", "Up", End, Text, 50),
-            ("ratio", "Ratio", End, Text, 40),
-            ("state", "State", Start, Text, 60),
+            ("name", Start, Text, 80),
+            ("size", End, Text, 50),
+            ("progress", Start, Progress, 60),
+            ("download_rate", End, Text, 50),
+            ("upload_rate", End, Text, 50),
+            ("ratio", End, Text, 40),
+            ("state", Start, Text, 60),
         ]
     );
 }
@@ -79,7 +78,7 @@ fn builtin_values_are_typed_and_ratio_uses_lifetime_uploads() {
             (column.value)(&torrent).compare(&expected),
             Ordering::Equal,
             "unexpected value in {}",
-            column.title
+            column.id.as_str()
         );
     }
 }

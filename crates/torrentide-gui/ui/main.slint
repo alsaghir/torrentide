@@ -1,25 +1,91 @@
 import { ListView, Palette } from "std-widgets.slint";
 
+export enum CellAlign { start, end }
+
+export enum CellKind { text, progress }
+
+export struct ColumnSpec {
+    id: string,
+    width: length,
+    align: CellAlign,
+    kind: CellKind,
+}
+
+export struct Cell {
+    text: string,
+    fraction: float,
+}
+
+export struct TorrentRow {
+    cells: [Cell],
+}
+
+global ColumnTitles {
+    pure public function of(id: string) -> string {
+        if id == "name" { return @tr("Name"); }
+        if id == "size" { return @tr("Size"); }
+        if id == "progress" { return @tr("Progress"); }
+        if id == "download_rate" { return @tr("Down"); }
+        if id == "upload_rate" { return @tr("Up"); }
+        if id == "ratio" { return @tr("Ratio"); }
+        if id == "state" { return @tr("State"); }
+        return id;
+    }
+}
+
+component TableCell inherits Rectangle {
+    in property <string> text;
+    in property <CellAlign> align;
+    in property <CellKind> kind;
+    in property <float> fraction;
+    clip: true;
+
+    if root.kind == CellKind.progress: Rectangle {
+        x: 6px;
+        y: (parent.height - self.height) / 2;
+        width: max(0px, parent.width - 12px);
+        height: 16px;
+        border-radius: 3px;
+        background: Palette.foreground.with-alpha(0.10);
+
+        Rectangle {
+            x: 0px;
+            width: parent.width * root.fraction;
+            height: parent.height;
+            border-radius: parent.border-radius;
+            background: Palette.accent-background.with-alpha(0.45);
+        }
+    }
+
+    Text {
+        x: 6px;
+        width: max(0px, parent.width - 12px);
+        height: parent.height;
+        text: root.text;
+        color: Palette.foreground;
+        horizontal-alignment: root.align == CellAlign.end ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
 component HeaderCell inherits Rectangle {
     in property <string> text;
-    clip: true;
     // Slint does not provide a table column header role.
     accessible-role: button;
     accessible-label: root.text;
 
-    Text {
-        x: 6px;
-        width: parent.width - 12px;
-        height: parent.height;
+    TableCell {
         text: root.text;
-        color: Palette.foreground;
-        vertical-alignment: center;
-        overflow: elide;
         accessible-role: none;
     }
 }
 
 export component MainWindow inherits Window {
+    in property <[ColumnSpec]> columns;
+    in property <[TorrentRow]> rows;
+    private property <length> row-height: 24px;
+
     title: @tr("Torrentide");
     preferred-width: 900px;
     preferred-height: 600px;
@@ -27,38 +93,32 @@ export component MainWindow inherits Window {
 
     VerticalLayout {
         HorizontalLayout {
-            height: 24px;
-
-            HeaderCell {
-                horizontal-stretch: 1;
-                text: @tr("Name");
-            }
-            HeaderCell {
-                width: 90px;
-                text: @tr("Size");
-            }
-            HeaderCell {
-                width: 160px;
-                text: @tr("Progress");
-            }
-            HeaderCell {
-                width: 90px;
-                text: @tr("Down");
-            }
-            HeaderCell {
-                width: 90px;
-                text: @tr("Up");
-            }
-            HeaderCell {
-                width: 70px;
-                text: @tr("Ratio");
-            }
-            HeaderCell {
-                width: 100px;
-                text: @tr("State");
+            height: root.row-height;
+            alignment: start;
+            spacing: 0px;
+            for column in root.columns: HeaderCell {
+                width: column.width;
+                text: ColumnTitles.of(column.id);
             }
         }
 
-        ListView {}
+        ListView {
+            for row in root.rows: Rectangle {
+                height: root.row-height;
+                accessible-role: list-item;
+
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 0px;
+                    for cell[i] in row.cells: TableCell {
+                        width: root.columns[i].width;
+                        align: root.columns[i].align;
+                        kind: root.columns[i].kind;
+                        text: cell.text;
+                        fraction: cell.fraction;
+                    }
+                }
+            }
+        }
     }
 }

@@ -60,8 +60,6 @@ pub enum CellKind {
 pub struct Column {
     /// The column's persistence key.
     pub id: ColumnId,
-    /// The header label.
-    pub title: &'static str,
     /// The alignment of the cell contents.
     pub align: Align,
     /// The cell presentation.
@@ -219,7 +217,6 @@ pub fn builtin() -> Vec<Column> {
     vec![
         Column {
             id: ColumnId::NAME,
-            title: "Name",
             align: Align::Start,
             kind: CellKind::Text,
             default_width: 300,
@@ -232,7 +229,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::SIZE,
-            title: "Size",
             align: Align::End,
             kind: CellKind::Text,
             default_width: 90,
@@ -242,7 +238,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::PROGRESS,
-            title: "Progress",
             align: Align::Start,
             kind: CellKind::Progress,
             default_width: 160,
@@ -255,7 +250,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::DOWNLOAD_RATE,
-            title: "Down",
             align: Align::End,
             kind: CellKind::Text,
             default_width: 90,
@@ -265,7 +259,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::UPLOAD_RATE,
-            title: "Up",
             align: Align::End,
             kind: CellKind::Text,
             default_width: 90,
@@ -275,7 +268,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::RATIO,
-            title: "Ratio",
             align: Align::End,
             kind: CellKind::Text,
             default_width: 70,
@@ -288,7 +280,6 @@ pub fn builtin() -> Vec<Column> {
         },
         Column {
             id: ColumnId::STATE,
-            title: "State",
             align: Align::Start,
             kind: CellKind::Text,
             default_width: 100,
