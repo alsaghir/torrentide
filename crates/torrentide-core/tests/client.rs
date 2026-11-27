@@ -63,7 +63,7 @@ impl Engine for SharedEngine {
             } else {
                 TorrentState::Running
             };
-            torrents.push(TorrentStatus { id, state });
+            torrents.push(status_for(id, state));
             Ok(id)
         })
     }
@@ -101,9 +101,18 @@ fn id(byte: u8) -> TorrentId {
 }
 
 fn status(byte: u8, state: TorrentState) -> TorrentStatus {
+    status_for(id(byte), state)
+}
+
+fn status_for(id: TorrentId, state: TorrentState) -> TorrentStatus {
     TorrentStatus {
-        id: id(byte),
+        id,
         state,
+        name: None,
+        size: 0,
+        done: 0,
+        download_rate: 0,
+        upload_rate: 0,
     }
 }
 

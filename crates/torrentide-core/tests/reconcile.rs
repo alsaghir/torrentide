@@ -44,6 +44,11 @@ impl Engine for FixedEngine {
             .map(|&id| TorrentStatus {
                 id,
                 state: TorrentState::Paused,
+                name: None,
+                size: 0,
+                done: 0,
+                download_rate: 0,
+                upload_rate: 0,
             })
             .collect()
     }

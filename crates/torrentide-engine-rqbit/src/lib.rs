@@ -91,6 +91,25 @@ fn torrent_id(torrent: &ManagedTorrent) -> TorrentId {
     TorrentId::from_info_hash(torrent.info_hash().0)
 }
 
+fn status(torrent: &ManagedTorrent) -> TorrentStatus {
+    let stats = torrent.stats();
+    TorrentStatus {
+        id: torrent_id(torrent),
+        name: torrent.name(),
+        size: stats.total_bytes,
+        done: stats.progress_bytes,
+        download_rate: stats
+            .live
+            .as_ref()
+            .map_or(0, |live| live.download_speed.as_bytes()),
+        upload_rate: stats
+            .live
+            .as_ref()
+            .map_or(0, |live| live.upload_speed.as_bytes()),
+        state: torrent_state(stats),
+    }
+}
+
 fn torrent_state(stats: TorrentStats) -> TorrentState {
     match stats.state {
         TorrentStatsState::Initializing { .. } => TorrentState::Checking,
@@ -172,14 +191,8 @@ impl Engine for RqbitEngine {
     }
 
     fn snapshot(&self) -> Vec<TorrentStatus> {
-        self.session.with_torrents(|torrents| {
-            torrents
-                .map(|(_, torrent)| TorrentStatus {
-                    id: torrent_id(torrent),
-                    state: torrent_state(torrent.stats()),
-                })
-                .collect()
-        })
+        self.session
+            .with_torrents(|torrents| torrents.map(|(_, torrent)| status(torrent)).collect())
     }
 }
 

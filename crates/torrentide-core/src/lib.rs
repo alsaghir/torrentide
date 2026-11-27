@@ -94,6 +94,16 @@ pub enum TorrentState {
 pub struct TorrentStatus {
     pub id: TorrentId,
     pub state: TorrentState,
+    /// The torrent's name from its metadata, or `None` until the engine knows it.
+    pub name: Option<String>,
+    /// Total bytes to download.
+    pub size: u64,
+    /// Bytes downloaded and verified, or bytes verified so far while checking.
+    pub done: u64,
+    /// Download rate in bytes per second; zero unless running.
+    pub download_rate: u64,
+    /// Upload rate in bytes per second; zero unless running.
+    pub upload_rate: u64,
 }
 
 #[derive(Debug, thiserror::Error)]

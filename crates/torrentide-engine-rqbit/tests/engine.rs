@@ -13,16 +13,18 @@ struct Fixture {
     engine: RqbitEngine,
     torrent_file: Vec<u8>,
     id: TorrentId,
+    payload_size: u64,
     dir: tempfile::TempDir,
 }
 
 async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
-    let (_, torrent) = payload_torrent(dir.path()).await;
+    let (payload, torrent) = payload_torrent(dir.path()).await;
     Fixture {
         engine: RqbitEngine::new(isolated_session(dir.path(), None).await),
         torrent_file: torrent.as_bytes().unwrap().to_vec(),
         id: TorrentId::from_info_hash(torrent.info_hash().0),
+        payload_size: u64::try_from(payload.len()).unwrap(),
         dir,
     }
 }
@@ -41,12 +43,12 @@ fn payload_exists(dir: &Path) -> bool {
     dir.join(PAYLOAD_NAME).try_exists().unwrap()
 }
 
+fn status(engine: &RqbitEngine, id: TorrentId) -> Option<TorrentStatus> {
+    engine.snapshot().into_iter().find(|status| status.id == id)
+}
+
 fn state(engine: &RqbitEngine, id: TorrentId) -> Option<TorrentState> {
-    engine
-        .snapshot()
-        .into_iter()
-        .find(|status| status.id == id)
-        .map(|status| status.state)
+    status(engine, id).map(|status| status.state)
 }
 
 /// Polls until the torrent reaches `expected`: the hash check runs in the background.
@@ -156,6 +158,26 @@ async fn torrent_added_paused_is_checked_then_paused() {
 }
 
 #[tokio::test]
+async fn snapshot_reports_name_size_and_progress() {
+    let fixture = fixture().await;
+    let id = add_paused(&fixture).await.unwrap();
+    wait_for_state(&fixture.engine, id, TorrentState::Paused).await;
+
+    fixture.engine.resume(id).await.unwrap();
+    wait_for_state(&fixture.engine, id, TorrentState::Running).await;
+    let running = status(&fixture.engine, id).expect("running torrent in snapshot");
+    assert_eq!(running.name.as_deref(), Some(PAYLOAD_NAME));
+    assert_eq!(running.size, fixture.payload_size);
+    assert_eq!(running.done, fixture.payload_size);
+
+    fixture.engine.pause(id).await.unwrap();
+    wait_for_state(&fixture.engine, id, TorrentState::Paused).await;
+    let paused = status(&fixture.engine, id).expect("paused torrent in snapshot");
+    assert_eq!(paused.download_rate, 0);
+    assert_eq!(paused.upload_rate, 0);
+}
+
+#[tokio::test]
 async fn resume_runs_and_pause_stops_the_torrent() {
     let fixture = fixture().await;
     add_paused(&fixture).await.unwrap();
@@ -214,7 +236,8 @@ fn test_setup() -> (tempfile::TempDir, Paths, Settings) {
 #[tokio::test]
 async fn restart_restores_the_torrents() {
     let (_root, paths, settings) = test_setup();
-    let (_, torrent) = payload_torrent(&settings.downloads.dir).await;
+    let (payload, torrent) = payload_torrent(&settings.downloads.dir).await;
+    let payload_size = u64::try_from(payload.len()).unwrap();
     let torrent_file = torrent.as_bytes().expect("torrent bytes").to_vec();
     let expected_id = TorrentId::from_info_hash(torrent.info_hash().0);
 
@@ -240,16 +263,10 @@ async fn restart_restores_the_torrents() {
         .await
         .expect("engine restarts");
     wait_for_state(&engine, id, TorrentState::Paused).await;
-    let snapshot = engine.snapshot();
-    let restored = snapshot.into_iter().find(|status| status.id == id);
-
-    assert_eq!(
-        restored,
-        Some(TorrentStatus {
-            id,
-            state: TorrentState::Paused,
-        })
-    );
+    let restored = status(&engine, id).expect("restored torrent in snapshot");
+    assert_eq!(restored.state, TorrentState::Paused);
+    assert_eq!(restored.size, payload_size);
+    assert_eq!(restored.done, payload_size);
     engine.stop().await;
 }
 
