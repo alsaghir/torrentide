@@ -6641,6 +6641,7 @@ dependencies = [
  "slint",
  "slint-build",
  "thiserror 2.0.21",
+ "torrentide-core",
 ]
 
 [[package]]

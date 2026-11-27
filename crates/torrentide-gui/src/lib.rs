@@ -1,5 +1,7 @@
 //! Slint user interface for the Torrentide BitTorrent client.
 
+pub mod columns;
+
 use slint::{ComponentHandle, PlatformError};
 
 #[allow(
