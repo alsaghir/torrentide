@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::{Settings, SettingsError};
-use crate::Paths;
+use crate::{Paths, error_chain};
 
 const FILE_NAME: &str = "settings.toml";
 
@@ -94,6 +94,32 @@ impl SettingsFile {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Loads settings, logging when first-run defaults are written or an invalid file is replaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SettingsFileError`] if the file cannot be read, moved aside, or written.
+    pub fn load_logged(paths: &Paths) -> Result<Settings, SettingsFileError> {
+        let file = Self::new(paths);
+        let loaded = file.load_or_init(|| Settings::first_run(paths))?;
+        match &loaded {
+            LoadedSettings::Existing(_) => {}
+            LoadedSettings::Created(_) => {
+                tracing::info!(path = %file.path().display(), "wrote default settings");
+            }
+            LoadedSettings::Recovered {
+                invalid, reason, ..
+            } => {
+                tracing::warn!(
+                    moved_to = %invalid.display(),
+                    error = %error_chain(reason),
+                    "settings were invalid; using defaults"
+                );
+            }
+        }
+        Ok(loaded.into_settings())
     }
 
     /// Reads the settings; writes `defaults()` when the file is missing or broken.

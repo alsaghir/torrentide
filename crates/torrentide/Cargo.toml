@@ -14,6 +14,10 @@ publish.workspace = true
 [dependencies]
 torrentide-core.workspace = true
 torrentide-gui.workspace = true
+torrentide-engine-rqbit.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

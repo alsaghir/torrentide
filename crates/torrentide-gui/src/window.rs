@@ -5,21 +5,29 @@ use std::collections::HashMap;
 use std::fmt::{self, Write as _};
 use std::rc::Rc;
 
-use slint::{ComponentHandle, Model, ModelRc, PlatformError, VecModel};
+use slint::{ComponentHandle, EventLoopError, Model, ModelRc, PlatformError, VecModel};
+use tokio::sync::watch;
 use torrentide_core::Torrent;
 
-use crate::columns::{Align, CellKind, CellValue, Column, TableLayout};
+use crate::columns::{Align, CellKind, CellValue, Column, Direction, Sort, TableLayout};
 use crate::fluent::{self, Cell, ColumnSpec, MainWindow, TorrentRow};
 
 /// The window system could not be started or failed while running.
 #[derive(Debug, thiserror::Error)]
-#[error("the window system failed")]
-pub struct RunError(#[from] PlatformError);
+pub enum RunError {
+    /// The window could not be created, shown, or run.
+    #[error("the window system failed")]
+    Platform(#[from] PlatformError),
+    /// The snapshot task could not be scheduled on the window's event loop.
+    #[error("cannot follow torrent snapshots")]
+    Follow(#[from] EventLoopError),
+}
 
 /// Displays torrent snapshots in a single-threaded Slint window.
 pub struct Window {
     component: MainWindow,
     columns: Vec<Column>,
+    sort: Sort,
     rows: Rc<VecModel<TorrentRow>>,
     shown: RefCell<Vec<ShownRow>>,
 }
@@ -55,12 +63,15 @@ impl Window {
         Ok(Self {
             component,
             columns,
+            sort: layout.sort,
             rows,
             shown: RefCell::default(),
         })
     }
 
-    /// Displays the torrents in slice order, updating only cells whose display changes.
+    /// Displays torrents in layout sort order, updating only cells whose display changes.
+    ///
+    /// Keeps snapshot order for equal keys or if the sort column is not visible.
     pub fn show_torrents(&self, torrents: &[Torrent]) {
         let mut shown = self.shown.borrow_mut();
         while shown.len() > torrents.len() {
@@ -69,24 +80,23 @@ impl Window {
         }
 
         let mut text = String::new();
-        for (row, torrent) in shown.iter_mut().zip(torrents) {
-            if row.torrent == *torrent {
+        for (position, torrent) in self.sorted(torrents).into_iter().enumerate() {
+            if let Some(row) = shown.get_mut(position) {
+                if row.torrent == *torrent {
+                    continue;
+                }
+                for (index, column) in self.columns.iter().enumerate() {
+                    let fraction = format_cell(&(column.value)(torrent), &mut text);
+                    if row.cells.row_data(index).is_some_and(|cell| {
+                        cell.text.as_str() != text || cell.fraction.to_bits() != fraction.to_bits()
+                    }) {
+                        row.cells.set_row_data(index, make_cell(&text, fraction));
+                    }
+                }
+                row.torrent.clone_from(torrent);
                 continue;
             }
-            for (index, column) in self.columns.iter().enumerate() {
-                let fraction = format_cell(&(column.value)(torrent), &mut text);
-                if row.cells.row_data(index).is_some_and(|cell| {
-                    cell.text.as_str() != text || cell.fraction.to_bits() != fraction.to_bits()
-                }) {
-                    row.cells.set_row_data(index, make_cell(&text, fraction));
-                }
-            }
-            row.torrent.clone_from(torrent);
-        }
 
-        let new_torrents = &torrents[shown.len()..];
-        shown.reserve(new_torrents.len());
-        for torrent in new_torrents {
             let values: Vec<_> = self
                 .columns
                 .iter()
@@ -104,6 +114,56 @@ impl Window {
                 cells,
             });
         }
+    }
+
+    fn sorted<'a>(&self, torrents: &'a [Torrent]) -> Vec<&'a Torrent> {
+        let Some(column) = self
+            .columns
+            .iter()
+            .find(|column| column.id == self.sort.column)
+        else {
+            return torrents.iter().collect();
+        };
+        // One key per torrent: extractors may allocate, so they stay out of the comparator.
+        let mut keyed: Vec<_> = torrents
+            .iter()
+            .map(|torrent| ((column.value)(torrent), torrent))
+            .collect();
+        keyed.sort_by(|(left, _), (right, _)| {
+            let ordering = left.compare(right);
+            match self.sort.direction {
+                Direction::Ascending => ordering,
+                Direction::Descending => ordering.reverse(),
+            }
+        });
+        keyed.into_iter().map(|(_, torrent)| torrent).collect()
+    }
+
+    /// Displays the current snapshot and follows updates on the window's event loop.
+    ///
+    /// Call on the window thread. Updates stop when the channel closes or the window is dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError`] if the update task cannot be scheduled.
+    pub fn follow(
+        self: &Rc<Self>,
+        mut snapshots: watch::Receiver<Vec<Torrent>>,
+    ) -> Result<(), RunError> {
+        // Release the channel's read lock before touching Slint so publishers aren't blocked.
+        let snapshot = snapshots.borrow_and_update().clone();
+        self.show_torrents(&snapshot);
+        let window = Rc::downgrade(self);
+        slint::spawn_local(async move {
+            while snapshots.changed().await.is_ok() {
+                let Some(window) = window.upgrade() else {
+                    break;
+                };
+                let snapshot = snapshots.borrow_and_update().clone();
+                window.show_torrents(&snapshot);
+            }
+        })?;
+        Ok(())
     }
 
     /// Shows the window and runs its event loop.
@@ -282,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn window_shows_formatted_cells_in_snapshot_order() {
+    fn window_shows_formatted_cells_in_name_order() {
         let window = window(columns::builtin());
         let mut complete = torrent("Complete");
         complete.status.done = 4096;
@@ -291,7 +351,7 @@ mod tests {
         let first = displayed_row(&window, 0).cells;
         let second = displayed_row(&window, 1).cells;
         assert_eq!(
-            first.iter().map(|cell| cell.text).collect::<Vec<_>>(),
+            second.iter().map(|cell| cell.text).collect::<Vec<_>>(),
             [
                 "In progress",
                 "2.0 KiB",
@@ -302,10 +362,68 @@ mod tests {
                 "Downloading"
             ]
         );
-        assert_eq!(second.row_data(0).expect("name").text, "Complete");
+        assert_eq!(first.row_data(0).expect("name").text, "Complete");
         assert_eq!(
-            second.row_data(2).expect("progress").fraction.to_bits(),
+            first.row_data(2).expect("progress").fraction.to_bits(),
             1.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn window_sorts_names_case_insensitively() {
+        let window = window(columns::builtin());
+        window.show_torrents(&[torrent("beta"), torrent("Alpha"), torrent("gamma")]);
+        let names: Vec<_> = (0..3)
+            .map(|index| {
+                displayed_row(&window, index)
+                    .cells
+                    .row_data(0)
+                    .unwrap()
+                    .text
+            })
+            .collect();
+        assert_eq!(names, ["Alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn window_keeps_snapshot_order_when_sort_column_is_hidden() {
+        let mut columns = columns::builtin();
+        columns[0].default_visible = false;
+        let window = window(columns);
+        let mut larger = torrent("beta");
+        larger.status.size = 3072;
+        window.show_torrents(&[larger, torrent("Alpha")]);
+        assert_eq!(
+            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
+            "3.0 KiB"
+        );
+        assert_eq!(
+            displayed_row(&window, 1).cells.row_data(0).unwrap().text,
+            "2.0 KiB"
+        );
+    }
+
+    #[test]
+    fn window_follows_snapshot_updates() {
+        i_slint_backend_testing::init_integration_test_with_mock_time();
+        let window = Rc::new(Window::new(columns::builtin()).unwrap());
+        let (publisher, snapshots) = watch::channel(vec![torrent("Initial")]);
+        window.follow(snapshots).unwrap();
+        assert_eq!(
+            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
+            "Initial"
+        );
+
+        // Poll the task once to register its watch waker before publishing the next snapshot.
+        slint::quit_event_loop().unwrap();
+        slint::run_event_loop().unwrap();
+        publisher.send(vec![torrent("Updated")]).unwrap();
+        drop(publisher);
+        slint::quit_event_loop().unwrap();
+        slint::run_event_loop().unwrap();
+        assert_eq!(
+            displayed_row(&window, 0).cells.row_data(0).unwrap().text,
+            "Updated"
         );
     }
 

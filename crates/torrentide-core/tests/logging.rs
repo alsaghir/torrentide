@@ -5,7 +5,7 @@
 use std::{fs, thread};
 
 use torrentide_core::logging::{self, LogError};
-use torrentide_core::{APP_NAME, Paths};
+use torrentide_core::{APP_NAME, Paths, SettingsFile};
 
 fn portable() -> (tempfile::TempDir, Paths) {
     let root = tempfile::tempdir().expect("temp dir");
@@ -39,6 +39,34 @@ fn info_events_from_torrentide_crates_reach_the_log_file() {
         assert!(name.starts_with(APP_NAME), "unexpected log name: {name}");
         assert_eq!(path.extension().unwrap(), "log");
     }
+}
+
+#[test]
+fn settings_loader_logs_creation_and_recovery() {
+    let (_root, paths) = portable();
+    let guard = logging::init(&paths, None).unwrap();
+    let file = SettingsFile::new(&paths);
+    SettingsFile::load_logged(&paths).unwrap();
+    let invalid = "version = 2";
+    fs::write(file.path(), invalid).unwrap();
+    let recovered = SettingsFile::load_logged(&paths).unwrap();
+    assert_eq!(SettingsFile::load_logged(&paths).unwrap(), recovered);
+    drop(guard);
+
+    let backup = fs::read_dir(paths.config_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path != file.path())
+        .expect("an invalid settings backup");
+    assert_eq!(fs::read_to_string(&backup).unwrap(), invalid);
+    let logs = read_logs(&paths);
+    assert!(logs.lines().any(|line| line.contains("INFO")
+        && line.contains("wrote default settings")
+        && line.contains(&format!("path={}", file.path().display()))));
+    assert!(logs.lines().any(|line| line.contains("WARN")
+        && line.contains("settings were invalid; using defaults")
+        && line.contains(&format!("moved_to={}", backup.display()))
+        && line.contains("error=settings version 2 is not supported")));
 }
 
 #[test]

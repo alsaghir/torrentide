@@ -14,8 +14,8 @@ use tokio::sync::watch;
 use torrentide_core::logging::{self, LogError, LogGuard};
 use torrentide_core::{
     AddOptions, AddSource, ClientError, ClientHandle, Database, DatabaseError, EngineError,
-    HomeNotFound, LoadedSettings, Paths, Settings, SettingsFile, SettingsFileError, Torrent,
-    TorrentState, error_chain,
+    HomeNotFound, Paths, Settings, SettingsFile, SettingsFileError, Torrent, TorrentState,
+    error_chain,
 };
 use torrentide_engine_rqbit::RqbitEngine;
 
@@ -142,36 +142,12 @@ async fn add(paths: &Paths, file: PathBuf, paused: bool) -> Result<(), CliError>
 
 /// Starts the client the way the GUI does: settings, database, engine.
 async fn client(paths: &Paths) -> Result<(ClientHandle<RqbitEngine>, Settings), CliError> {
-    let settings = settings(paths)?;
+    let settings = SettingsFile::load_logged(paths)?;
     // Before the engine: opening fails without side effects.
     let database = Database::open(paths)?;
     let engine = RqbitEngine::start(paths, &settings).await?;
     let client = ClientHandle::spawn(engine, database, TICK)?;
     Ok((client, settings))
-}
-
-fn settings(paths: &Paths) -> Result<Settings, SettingsFileError> {
-    let file = SettingsFile::new(paths);
-    let settings = match file.load_or_init(|| Settings::first_run(paths))? {
-        LoadedSettings::Existing(settings) => settings,
-        LoadedSettings::Created(settings) => {
-            tracing::info!(path = %file.path().display(), "wrote default settings");
-            settings
-        }
-        LoadedSettings::Recovered {
-            settings,
-            invalid,
-            reason,
-        } => {
-            tracing::warn!(
-                moved_to = %invalid.display(),
-                error = %error_chain(&reason),
-                "settings were invalid; using defaults"
-            );
-            settings
-        }
-    };
-    Ok(settings)
 }
 
 async fn run_client(paths: &Paths) -> Result<(), CliError> {
