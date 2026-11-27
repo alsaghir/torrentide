@@ -20,6 +20,19 @@ pub use settings::{
 /// An error from a dependency, kept as the `source` of a Torrentide error.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// The error and its sources, outermost first: `cannot read x: No such file or directory`.
+#[must_use]
+pub fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 /// Identifies a torrent by its v1 info hash, which is the same across restarts and engines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TorrentId([u8; 20]);
@@ -153,6 +166,16 @@ pub trait Engine: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_chain_joins_sources_outermost_first() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("outer")]
+        struct Outer(#[source] std::io::Error);
+
+        let error = Outer(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
+        assert_eq!(error_chain(&error), "outer: missing");
+    }
 
     #[test]
     fn torrent_id_displays_as_lowercase_hex() {

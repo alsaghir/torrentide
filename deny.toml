@@ -19,13 +19,16 @@ unmaintained = "workspace"
 yanked = "deny"
 
 [licenses]
-# Every licence here must be compatible with distributing Torrentide under MPL-2.0.
+# Every licence here must be compatible with Torrentide's licensing: MPL-2.0 source, GPL-3.0 GUI binary.
 # For `A OR B` expressions only one alternative needs to be allowed.
 allow = [
     "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # Slint is used under its GPL-3.0 option, so the GUI binary is distributed under GPL-3.0.
+    # Torrentide's source stays MPL-2.0, compatible via the Secondary License clause (LICENSE §3.3).
+    "GPL-3.0-only",
     "ISC",
     "MIT",
     "MPL-2.0",
@@ -48,6 +51,10 @@ allow-wildcard-paths = true
 deny = [
     { crate = "librqbit", wrappers = ["torrentide-engine-rqbit", "torrentide-testkit"], reason = "only the engine adapter uses librqbit, and the testkit for test peers; everything else goes through torrentide-core's Engine trait" },
     { crate = "rusqlite", wrappers = ["torrentide-core"], reason = "one crate owns the database; everything else goes through its API" },
+    { crate = "torrentide-engine-rqbit", wrappers = ["torrentide", "torrentide-cli"], reason = "only composition roots choose the engine; the GUI and core talk to torrentide-core" },
+    { crate = "torrentide-gui", wrappers = ["torrentide"], reason = "only the desktop composition root uses the GUI crate" },
+    { crate = "slint", wrappers = ["torrentide-gui"], reason = "the UI toolkit stays inside the GUI crate" },
+    { crate = "slint-build", wrappers = ["torrentide-gui"], reason = "the UI toolkit stays inside the GUI crate" },
 ]
 
 [sources]

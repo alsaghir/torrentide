@@ -11,3 +11,7 @@ Status: early development - not usable yet.
 ## License
 
 [MPL-2.0](LICENSE)
+
+The GUI binary includes [Slint](https://slint.dev) under its GPL-3.0 option and
+is therefore distributed under GPL-3.0; the source code and the headless
+`torrentide-cli` stay MPL-2.0.

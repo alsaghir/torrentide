@@ -20,8 +20,7 @@
     let
       inherit (nixpkgs) lib;
 
-      # Becomes the GUI crate's package name once that crate exists (M5).
-      name = "torrentide";
+      name = (lib.importTOML ./crates/torrentide/Cargo.toml).package.name;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -43,7 +42,11 @@
 
           src = lib.fileset.toSource {
             root = ./.;
-            fileset = craneLib.fileset.commonCargoSources ./.;
+            fileset = lib.fileset.unions [
+              (craneLib.fileset.commonCargoSources ./.)
+              # slint-build reads UI sources at build time, outside crane's default Cargo fileset.
+              (lib.fileset.fileFilter (file: file.hasExt "slint" || file.name == "slint-project.json") ./.)
+            ];
           };
           nixSrc = lib.fileset.toSource {
             root = ./.;

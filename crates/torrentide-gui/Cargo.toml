@@ -1,0 +1,25 @@
+[package]
+name = "torrentide-gui"
+description = "Slint user interface of the Torrentide BitTorrent client"
+keywords = ["bittorrent", "torrent", "p2p", "gui"]
+categories = ["network-programming", "gui"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+slint.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "torrentide"
+description = "Desktop BitTorrent client written in Rust"
+keywords = ["bittorrent", "torrent", "p2p", "gui"]
+categories = ["network-programming", "gui"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+torrentide-core.workspace = true
+torrentide-gui.workspace = true
+
+[lints]
+workspace = true

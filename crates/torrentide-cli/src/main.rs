@@ -1,7 +1,6 @@
 //! Headless front end: the same core as the GUI, driven from a terminal or a script.
 
 use std::borrow::Cow;
-use std::error::Error;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -78,22 +77,10 @@ async fn main() -> ExitCode {
     match run(cli).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("torrentide-cli: {}", chain(&error));
+            eprintln!("torrentide-cli: {}", torrentide_core::error_chain(&error));
             ExitCode::FAILURE
         }
     }
-}
-
-/// The error and its sources, outermost first: `cannot read x: No such file or directory`.
-fn chain(error: &dyn Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
 }
 
 async fn run(cli: Cli) -> Result<(), CliError> {
@@ -166,7 +153,7 @@ fn settings(paths: &Paths) -> Result<Settings, SettingsFileError> {
         } => {
             eprintln!(
                 "settings were invalid ({}), moved to {}; using defaults",
-                chain(&reason),
+                torrentide_core::error_chain(&reason),
                 invalid.display()
             );
             settings
