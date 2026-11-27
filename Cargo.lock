@@ -6601,6 +6601,7 @@ dependencies = [
  "torrentide-core",
  "torrentide-engine-rqbit",
  "torrentide-testkit",
+ "tracing",
 ]
 
 [[package]]

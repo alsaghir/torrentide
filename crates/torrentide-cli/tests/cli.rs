@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Output, Stdio};
 
 use tempfile::TempDir;
-use torrentide_core::{Database, Paths, Settings, SettingsFile, TorrentId};
+use torrentide_core::{Database, Paths, Settings, SettingsFile, TorrentId, logging};
 
 fn cli(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_torrentide-cli"))
+        .env_remove("RUST_LOG")
         .arg("--portable")
         .arg(root)
         .args(args)
@@ -20,6 +21,21 @@ fn cli(root: &Path, args: &[&str]) -> Output {
 fn stdout(output: Output) -> String {
     assert!(output.status.success(), "{output:?}");
     String::from_utf8(output.stdout).expect("UTF-8 output")
+}
+
+fn logs(root: &Path) -> Vec<String> {
+    let dir = logging::dir(&Paths::portable(root));
+    fs::read_dir(dir)
+        .expect("log directory")
+        .map(|entry| entry.expect("log directory entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("torrentide"))
+                && path.extension().is_some_and(|ext| ext == "log")
+        })
+        .map(|path| fs::read_to_string(path).expect("log file"))
+        .collect()
 }
 
 /// A portable root whose settings keep the engine off the network.
@@ -74,6 +90,22 @@ fn list_on_a_fresh_root_prints_nothing() {
 }
 
 #[test]
+fn a_failing_command_logs_its_error() {
+    let root = tempfile::tempdir().expect("temp dir");
+    let missing = root.path().join("missing.torrent");
+
+    let output = add(root.path(), &missing);
+
+    assert!(!output.status.success(), "{output:?}");
+    let error = format!("cannot read {}:", missing.display());
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 output");
+    assert_eq!(stderr.matches(&error).count(), 1, "{stderr}");
+    let logs = logs(root.path());
+    let occurrences: usize = logs.iter().map(|log| log.matches(&error).count()).sum();
+    assert_eq!(occurrences, 1, "{logs:?}");
+}
+
+#[test]
 fn list_prints_rows_in_queue_order() {
     let root = tempfile::tempdir().expect("temp dir");
     let database = Database::open(&Paths::portable(root.path())).expect("open database");
@@ -117,7 +149,7 @@ fn adding_an_invalid_file_fails_and_adds_nothing() {
 
     assert!(!output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 output");
-    assert!(stderr.starts_with("torrentide-cli: "), "{stderr}");
+    assert!(stderr.contains("the engine failed"), "{stderr}");
     assert_eq!(stdout(cli(root.path(), &["list"])), "");
 }
 

@@ -1,6 +1,7 @@
 //! Headless front end: the same core as the GUI, driven from a terminal or a script.
 
 use std::borrow::Cow;
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -10,10 +11,11 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use tokio::sync::watch;
+use torrentide_core::logging::{self, LogError, LogGuard};
 use torrentide_core::{
     AddOptions, AddSource, ClientError, ClientHandle, Database, DatabaseError, EngineError,
     HomeNotFound, LoadedSettings, Paths, Settings, SettingsFile, SettingsFileError, Torrent,
-    TorrentState,
+    TorrentState, error_chain,
 };
 use torrentide_engine_rqbit::RqbitEngine;
 
@@ -52,6 +54,8 @@ enum CliError {
     #[error(transparent)]
     HomeNotFound(#[from] HomeNotFound),
     #[error(transparent)]
+    Logging(#[from] LogError),
+    #[error(transparent)]
     Settings(#[from] SettingsFileError),
     #[error(transparent)]
     Database(#[from] DatabaseError),
@@ -74,26 +78,34 @@ enum CliError {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(cli).await {
+    let (paths, _log) = match startup(cli.portable.as_deref()) {
+        Ok(started) => started,
+        Err(error) => {
+            eprintln!("torrentide-cli: {}", error_chain(&error));
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&paths, cli.command).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("torrentide-cli: {}", torrentide_core::error_chain(&error));
+            tracing::error!("{}", error_chain(&error));
             ExitCode::FAILURE
         }
     }
 }
 
-async fn run(cli: Cli) -> Result<(), CliError> {
-    let paths = paths(cli.portable.as_deref())?;
-    match cli.command {
-        Command::List => list(&paths),
-        Command::Add { file, paused } => add(&paths, file, paused).await,
-        Command::Run => run_client(&paths).await,
-    }
+fn startup(portable: Option<&Path>) -> Result<(Paths, LogGuard), CliError> {
+    let paths = portable.map_or_else(Paths::standard, |root| Ok(Paths::portable(root)))?;
+    let log = logging::init(&paths, env::var("RUST_LOG").ok().as_deref())?;
+    Ok((paths, log))
 }
 
-fn paths(portable: Option<&Path>) -> Result<Paths, HomeNotFound> {
-    portable.map_or_else(Paths::standard, |root| Ok(Paths::portable(root)))
+async fn run(paths: &Paths, command: Command) -> Result<(), CliError> {
+    match command {
+        Command::List => list(paths),
+        Command::Add { file, paused } => add(paths, file, paused).await,
+        Command::Run => run_client(paths).await,
+    }
 }
 
 fn list(paths: &Paths) -> Result<(), CliError> {
@@ -143,7 +155,7 @@ fn settings(paths: &Paths) -> Result<Settings, SettingsFileError> {
     let settings = match file.load_or_init(|| Settings::first_run(paths))? {
         LoadedSettings::Existing(settings) => settings,
         LoadedSettings::Created(settings) => {
-            eprintln!("wrote default settings to {}", file.path().display());
+            tracing::info!(path = %file.path().display(), "wrote default settings");
             settings
         }
         LoadedSettings::Recovered {
@@ -151,10 +163,10 @@ fn settings(paths: &Paths) -> Result<Settings, SettingsFileError> {
             invalid,
             reason,
         } => {
-            eprintln!(
-                "settings were invalid ({}), moved to {}; using defaults",
-                torrentide_core::error_chain(&reason),
-                invalid.display()
+            tracing::warn!(
+                moved_to = %invalid.display(),
+                error = %error_chain(&reason),
+                "settings were invalid; using defaults"
             );
             settings
         }

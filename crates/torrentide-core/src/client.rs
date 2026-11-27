@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    io::{self, Write},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -146,12 +145,7 @@ impl Uploads {
         }
         if let Err(error) = database.set_uploaded(changed) {
             // Keep the totals dirty for retry; a failed write must not stop the engine.
-            // Even a closed stderr must not make reporting the failure fatal.
-            let _ = writeln!(
-                io::stderr().lock(),
-                "torrentide: cannot save upload totals: {}",
-                error_chain(&error)
-            );
+            tracing::warn!(error = %error_chain(&error), "cannot save upload totals");
             return;
         }
         for counter in self.0.values_mut() {
